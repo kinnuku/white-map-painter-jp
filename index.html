@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>白地図に色つけちゃうよ～！</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+
+<style>
+body {
+    margin:0;
+    font-family:sans-serif;
+    display:flex;
+}
+
+#map {
+    flex:1;
+    height:100vh;
+}
+
+/* ===== コントロール ===== */
+.controls{
+    width:260px;
+    height:100vh;
+    overflow:auto;
+
+    padding:10px;
+    background:#111;
+    color:#fff;
+
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+}
+
+/* ★ 行分け */
+.topbar{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+}
+
+/* 色行 */
+.color-row{
+    display:flex;
+    gap:8px;
+    align-items:center;
+}
+
+/* ボタン行 */
+.btn-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+}
+
+/* ===== 色ボタン ===== */
+.color-btn{
+    width:26px;
+    height:26px;
+    border-radius:50%;
+    border:2px solid #666;
+    cursor:pointer;
+    transition:0.2s;
+}
+
+.color-btn.active{
+    border:3px solid #fff;
+    transform:scale(1.2);
+}
+
+/* 白用 */
+.color-btn[data-color="#ffffff"]{
+    border:2px solid #999;
+}
+
+/* ===== 通常ボタン ===== */
+button{
+    cursor:pointer;
+    height:38px;
+    padding:0 14px;
+    border-radius:8px;
+    font-size:14px;
+}
+
+/* ===== 都道府県 ===== */
+.pref-list{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    max-height:none;
+    overflow:visible;
+}
+
+.pref-list label{
+    font-size:12px;
+    background:#222;
+    padding:3px 6px;
+    border-radius:6px;
+    cursor:pointer;
+}
+
+/* ===== ラベル ===== */
+.label{
+    font-weight:bold;
+    color:#000;
+    text-shadow:1px 1px 2px #fff;
+    white-space:nowrap;
+    cursor:move;
+
+    /* ★ これ追加（四角消す） */
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* 星の四角消す */
+.star-icon{
+    background: transparent !important;
+    border: none !important;
+}
+</style>
+</head>
+
+<body>
+
+<div class="controls">
+
+<div class="topbar">
+
+    <!-- ★ 色 -->
+    <div class="color-row">
+        <div class="color-btn" data-color="#e60000" style="background:#e60000" onclick="setColor('#e60000')"></div>
+        <div class="color-btn" data-color="#0070ff" style="background:#0070ff" onclick="setColor('#0070ff')"></div>
+        <div class="color-btn" data-color="#00b050" style="background:#00b050" onclick="setColor('#00b050')"></div>
+        <div class="color-btn" data-color="#ffff00" style="background:#ffff00" onclick="setColor('#ffff00')"></div>
+        <div class="color-btn" data-color="#ff9900" style="background:#ff9900" onclick="setColor('#ff9900')"></div>
+        <div class="color-btn" data-color="#ff66cc" style="background:#ff66cc" onclick="setColor('#ff66cc')"></div>
+        <div class="color-btn" data-color="#9900ff" style="background:#9900ff" onclick="setColor('#9900ff')"></div>
+        <div class="color-btn" data-color="#66ccff" style="background:#66ccff" onclick="setColor('#66ccff')"></div>
+    </div>
+
+    <!-- ★ ボタン -->
+    <div class="btn-row">
+        <button onclick="selectAll(true)">全選択</button>
+        <button onclick="selectAll(false)">全解除</button>
+        <button onclick="resetAll()">リセット</button>
+        <button onclick="downloadMap()">DL</button>
+        <button onclick="toggleStarMode()">★モード</button>
+    </div>
+
+    <span style="font-size:16px; color:#ccc;">
+    ★通常モード<br>
+    左クリック：市区町村を色塗り<br>
+    右クリック：色削除<br>
+    </span>
+
+    <span style="font-size:16px; color:#ccc;">
+    ★星モード<br>
+    ・左クリック：星追加<br>
+    ・星を左クリック：サイズ変更<br>
+    ・星をShift+左クリック：色変更<br>
+    ・星を右クリック：削除
+    </span>
+
+</div>
+
+<div id="prefList" class="pref-list"></div>
+
+</div>
+
+<div id="map"></div>
+
+<script>
+
+const map = L.map('map',{
+    zoomControl:true,
+    attributionControl:false,
+    zoomSnap:0.1,
+    zoomDelta:0.2,
+    wheelPxPerZoomLevel:200,
+    preferCanvas:true
+}).setView([37.5,137],5);
+
+let layerGroup = L.layerGroup().addTo(map);
+let labelLayer = L.layerGroup().addTo(map);
+let starLayer = L.layerGroup().addTo(map);
+
+let geoData=null;
+let currentColor="#e60000";
+
+let colorData=JSON.parse(localStorage.getItem("colors")||"{}");
+let sizeData=JSON.parse(localStorage.getItem("sizes")||"{}");
+let starData=JSON.parse(localStorage.getItem("stars")||"[]");
+let labelPos=JSON.parse(localStorage.getItem("labels")||"{}");
+
+let used=new Set();
+let starMode=false;
+
+function toggleStarMode(){
+    starMode=!starMode;
+    alert(starMode ? "★モード ON" : "OFF");
+}
+
+function setColor(c){
+    currentColor=c;
+
+    document.querySelectorAll('.color-btn').forEach(btn=>{
+        btn.classList.remove('active');
+    });
+
+    const btn = document.querySelector(`[data-color="${c}"]`);
+    if(btn) btn.classList.add('active');
+}
+
+function getName(f){
+    return f.properties.N03_005 || f.properties.N03_004;
+}
+
+const PREF_ORDER=["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県",
+"茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県",
+"新潟県","富山県","石川県","福井県","山梨県","長野県",
+"岐阜県","静岡県","愛知県","三重県",
+"滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県",
+"鳥取県","島根県","岡山県","広島県","山口県",
+"徳島県","香川県","愛媛県","高知県",
+"福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
+
+function createPrefUI(data){
+    const set=new Set(data.features.map(f=>f.properties.N03_001));
+    const container=document.getElementById("prefList");
+
+    PREF_ORDER.forEach(pref=>{
+        if(!set.has(pref)) return;
+        const label=document.createElement("label");
+        label.innerHTML=`<input type="checkbox" value="${pref}">${pref}`;
+        label.querySelector("input").onchange=render;
+        container.appendChild(label);
+    });
+}
+
+function getSelected(){
+    return [...document.querySelectorAll("#prefList input:checked")].map(i=>i.value);
+}
+
+function selectAll(flag){
+    document.querySelectorAll("#prefList input").forEach(i=>i.checked=flag);
+    render();
+}
+
+function render(){
+
+    if(!geoData) return;
+
+    layerGroup.clearLayers();
+    labelLayer.clearLayers();
+    used.clear();
+
+    const selected=getSelected();
+    if(selected.length===0) return;
+
+    const filtered={
+        type:"FeatureCollection",
+        features:geoData.features.filter(f=>selected.includes(f.properties.N03_001))
+    };
+
+    L.geoJSON(filtered,{
+        style:f=>{
+            const key=f.properties.N03_007;
+            return{
+                color:"#000",
+                weight:1,
+                fillColor:colorData[key]||"#fff",
+                fillOpacity:1
+            };
+        },
+
+        onEachFeature:(f,layer)=>{
+            const key=f.properties.N03_007;
+            const name=getName(f);
+            if(!name) return;
+
+            layer.on('click',()=>{
+                colorData[key]=currentColor;
+                localStorage.setItem("colors",JSON.stringify(colorData));
+                layer.setStyle({fillColor:currentColor});
+            });
+
+            layer.on('contextmenu',(e)=>{
+                e.originalEvent.preventDefault();
+                delete colorData[key];
+                localStorage.setItem("colors",JSON.stringify(colorData));
+                layer.setStyle({fillColor:"#fff"});
+            });
+
+            if(!used.has(key)){
+                used.add(key);
+
+                let center = labelPos[key] || layer.getBounds().getCenter();
+
+                const marker = L.marker(center,{
+                    draggable:true,
+                    icon:L.divIcon({
+                        className:'label',
+                        html:`<div style="font-size:${sizeData[key]||12}px">${name}</div>`
+                    })
+                }).addTo(labelLayer);
+
+                marker.on('dragend', e=>{
+                    const pos = e.target.getLatLng();
+                    labelPos[key] = {lat:pos.lat,lng:pos.lng};
+                    localStorage.setItem("labels", JSON.stringify(labelPos));
+                });
+
+                marker.on('click',()=>{
+                    let size = prompt("ラベルサイズ(px)", sizeData[key] || 12);
+                    if(!size) return;
+
+                    sizeData[key] = parseInt(size);
+                    localStorage.setItem("sizes", JSON.stringify(sizeData));
+
+                    marker.setIcon(L.divIcon({
+                        html:`<div class="label" style="font-size:${sizeData[key]}px">${name}</div>`
+                    }));
+                });
+            }
+        }
+
+    }).addTo(layerGroup);
+}
+
+// 星
+map.on('click', e=>{
+    if(!starMode) return;
+
+    let size=prompt("星サイズ(px)",20);
+    if(!size) return;
+
+    const s={lat:e.latlng.lat,lng:e.latlng.lng,size:parseInt(size),color:"gold"};
+    starData.push(s);
+    localStorage.setItem("stars",JSON.stringify(starData));
+    addStar(s);
+});
+
+function addStar(s){
+    const marker=L.marker([s.lat,s.lng],{
+        draggable:true,
+        icon:L.divIcon({
+            className:'star-icon',
+            html:`<div style="font-size:${s.size}px;color:${s.color};text-shadow:1px 1px 2px #000;">★</div>`
+        })
+    }).addTo(starLayer);
+
+    marker.on('dragend',e=>{
+        s.lat=e.target.getLatLng().lat;
+        s.lng=e.target.getLatLng().lng;
+        localStorage.setItem("stars",JSON.stringify(starData));
+    });
+
+    marker.on('click',(e)=>{
+        if(e.originalEvent.shiftKey){
+            let color=prompt("色",s.color);
+            if(!color) return;
+            s.color=color;
+        }else{
+            let size=prompt("サイズ(px)",s.size);
+            if(!size) return;
+            s.size=parseInt(size);
+        }
+
+        localStorage.setItem("stars",JSON.stringify(starData));
+
+        marker.setIcon(L.divIcon({
+            className:'star-icon',
+            html:`<div style="font-size:${s.size}px;color:${s.color};text-shadow:1px 1px 2px #000;">★</div>`
+        }));
+    });
+
+    marker.on('contextmenu',e=>{
+        e.originalEvent.preventDefault();
+        starLayer.removeLayer(marker);
+    });
+}
+
+// DL
+function downloadMap(){
+    html2canvas(document.getElementById("map"),{
+        useCORS:true,
+        scale:2,
+        backgroundColor:null
+    }).then(canvas=>{
+        const link=document.createElement("a");
+        link.download="japan_map.png";
+        link.href=canvas.toDataURL("image/png");
+        link.click();
+    });
+}
+
+function resetAll(){
+    if(!confirm("全部リセットしますか？")) return;
+    localStorage.clear();
+    location.reload();
+}
+
+fetch('N03.geojson')
+.then(res=>res.json())
+.then(data=>{
+    geoData=data;
+    createPrefUI(data);
+});
+
+// 初期色
+setTimeout(()=>setColor(currentColor),100);
+
+starData.forEach(addStar);
+
+</script>
+
+</body>
+</html>
