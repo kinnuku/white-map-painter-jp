@@ -123,6 +123,40 @@ button{
     background: transparent !important;
     border: none !important;
 }
+
+.leaflet-div-icon {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.color-picker-wrap{
+    width:26px;
+    height:26px;
+    border-radius:50%;
+    border:2px solid #666;
+    cursor:pointer;
+    position:relative;
+    overflow:hidden;
+
+    /* ★ これが重要：虹グラデーション */
+    background: conic-gradient(
+        red, orange, yellow, lime, cyan, blue, violet, red
+    );
+}
+
+.color-picker-wrap.active{
+    border:3px solid #fff;
+    transform:scale(1.2);
+}
+
+.color-picker-wrap input{
+    position:absolute;
+    inset:0;
+    opacity:0; /* ★ 見えなくする */
+    cursor:pointer;
+}
+
 </style>
 </head>
 
@@ -140,8 +174,12 @@ button{
         <div class="color-btn" data-color="#ffff00" style="background:#ffff00" onclick="setColor('#ffff00')"></div>
         <div class="color-btn" data-color="#ff9900" style="background:#ff9900" onclick="setColor('#ff9900')"></div>
         <div class="color-btn" data-color="#ff66cc" style="background:#ff66cc" onclick="setColor('#ff66cc')"></div>
-        <div class="color-btn" data-color="#9900ff" style="background:#9900ff" onclick="setColor('#9900ff')"></div>
         <div class="color-btn" data-color="#66ccff" style="background:#66ccff" onclick="setColor('#66ccff')"></div>
+
+        <!-- ★ カラーパレット追加 -->
+        <div class="color-picker-wrap">
+            <input type="color" id="colorPicker" value="#9900ff" onchange="pickColor(this.value)">
+        </div>
     </div>
 
     <!-- ★ ボタン -->
@@ -149,22 +187,32 @@ button{
         <button onclick="selectAll(true)">全選択</button>
         <button onclick="selectAll(false)">全解除</button>
         <button onclick="resetAll()">リセット</button>
-        <button onclick="downloadMap()">DL</button>
+        <button onclick="changeAllLabelSize()">文字サイズ一括</button>
         <button onclick="toggleStarMode()">★モード</button>
+        <button onclick="hideLabels()">市区町村削除</button>
+        <button onclick="showLabels()">市区町村復活</button>
+        <button onclick="downloadMap()">画像DL</button>
     </div>
 
     <span style="font-size:16px; color:#ccc;">
     ★通常モード<br>
-    左クリック：市区町村を色塗り<br>
-    右クリック：色削除<br>
+    ・左クリック：色塗り<br>
+    ・右クリック：色削除<br>
+    </span>
+
+    <span style="font-size:16px; color:#ccc;">
+    ★市区町村名<br>
+    ・左クリック：サイズ変更<br>
+    ・Shift+左クリック：白⇔黒に変更<br>
+    ・右クリック：削除<br>
     </span>
 
     <span style="font-size:16px; color:#ccc;">
     ★星モード<br>
-    ・左クリック：星追加<br>
-    ・星を左クリック：サイズ変更<br>
-    ・星をShift+左クリック：色変更<br>
-    ・星を右クリック：削除
+    ・地図上で左クリック：星追加<br>
+    ・左クリック：サイズ変更<br>
+    ・Shift+左クリック：色変更<br>
+    ・右クリック：削除
     </span>
 
 </div>
@@ -197,6 +245,9 @@ let colorData=JSON.parse(localStorage.getItem("colors")||"{}");
 let sizeData=JSON.parse(localStorage.getItem("sizes")||"{}");
 let starData=JSON.parse(localStorage.getItem("stars")||"[]");
 let labelPos=JSON.parse(localStorage.getItem("labels")||"{}");
+let labelVisible = JSON.parse(localStorage.getItem("labelVisible") ?? "true");
+let labelColorData = JSON.parse(localStorage.getItem("labelColors")||"{}");
+let geoCache = {};
 
 let used=new Set();
 let starMode=false;
@@ -211,6 +262,10 @@ function setColor(c){
 
     document.querySelectorAll('.color-btn').forEach(btn=>{
         btn.classList.remove('active');
+    });
+
+    document.querySelectorAll('.color-picker-wrap').forEach(p=>{
+        p.classList.remove('active');
     });
 
     const btn = document.querySelector(`[data-color="${c}"]`);
@@ -252,85 +307,122 @@ function selectAll(flag){
     render();
 }
 
-function render(){
-
-    if(!geoData) return;
+async function render(){
 
     layerGroup.clearLayers();
     labelLayer.clearLayers();
     used.clear();
 
-    const selected=getSelected();
-    if(selected.length===0) return;
+    const selected = getSelected();
+    if(selected.length === 0) return;
 
-    const filtered={
-        type:"FeatureCollection",
-        features:geoData.features.filter(f=>selected.includes(f.properties.N03_001))
-    };
+    for(const pref of selected){
 
-    L.geoJSON(filtered,{
-        style:f=>{
-            const key=f.properties.N03_007;
-            return{
-                color:"#000",
-                weight:1,
-                fillColor:colorData[key]||"#fff",
-                fillOpacity:1
-            };
-        },
+        try{
+            // ★ 都道府県ごとに読み込み
+            const res = await fetch(`geo/${pref}.geojson`);
+            if(!res.ok) throw new Error(pref + " 読み込み失敗");
 
-        onEachFeature:(f,layer)=>{
-            const key=f.properties.N03_007;
-            const name=getName(f);
-            if(!name) return;
+            const data = await res.json();
 
-            layer.on('click',()=>{
-                colorData[key]=currentColor;
-                localStorage.setItem("colors",JSON.stringify(colorData));
-                layer.setStyle({fillColor:currentColor});
-            });
+            L.geoJSON(data,{
+                style:f=>{
+                    const key=f.properties.N03_007;
+                    return{
+                        color:"#000",
+                        weight:1,
+                        fillColor:colorData[key]||"#fff",
+                        fillOpacity:1
+                    };
+                },
 
-            layer.on('contextmenu',(e)=>{
-                e.originalEvent.preventDefault();
-                delete colorData[key];
-                localStorage.setItem("colors",JSON.stringify(colorData));
-                layer.setStyle({fillColor:"#fff"});
-            });
+                onEachFeature:(f,layer)=>{
+                    const key=f.properties.N03_007;
+                    const name=getName(f);
+                    if(!name) return;
 
-            if(!used.has(key)){
-                used.add(key);
+                    // ===== 色塗り =====
+                    layer.on('click',()=>{
+                        colorData[key]=currentColor;
+                        localStorage.setItem("colors",JSON.stringify(colorData));
+                        layer.setStyle({fillColor:currentColor});
+                    });
 
-                let center = labelPos[key] || layer.getBounds().getCenter();
+                    layer.on('contextmenu',(e)=>{
+                        e.originalEvent.preventDefault();
+                        delete colorData[key];
+                        localStorage.setItem("colors",JSON.stringify(colorData));
+                        layer.setStyle({fillColor:"#fff"});
+                    });
 
-                const marker = L.marker(center,{
-                    draggable:true,
-                    icon:L.divIcon({
-                        className:'label',
-                        html:`<div style="font-size:${sizeData[key]||12}px">${name}</div>`
-                    })
-                }).addTo(labelLayer);
+                    // ===== ラベル =====
+                    if(!used.has(key)){
+                        used.add(key);
 
-                marker.on('dragend', e=>{
-                    const pos = e.target.getLatLng();
-                    labelPos[key] = {lat:pos.lat,lng:pos.lng};
-                    localStorage.setItem("labels", JSON.stringify(labelPos));
-                });
+                        let center = labelPos[key] || layer.getBounds().getCenter();
 
-                marker.on('click',()=>{
-                    let size = prompt("ラベルサイズ(px)", sizeData[key] || 12);
-                    if(!size) return;
+                        const marker = L.marker(center,{
+                            draggable:true,
+                            icon:L.divIcon({
+                                className:'label',
+                                html:`<div style="font-size:${sizeData[key]||12}px;color:${labelColorData[key]||'#000'}">${name}</div>`
+                            })
+                        }).addTo(labelLayer);
 
-                    sizeData[key] = parseInt(size);
-                    localStorage.setItem("sizes", JSON.stringify(sizeData));
+                        // 右クリック削除
+                        marker.on('contextmenu', e=>{
+                            e.originalEvent.preventDefault();
+                            labelLayer.removeLayer(marker);
+                        });
 
-                    marker.setIcon(L.divIcon({
-                        html:`<div class="label" style="font-size:${sizeData[key]}px">${name}</div>`
-                    }));
-                });
-            }
+                        // 左クリック
+                        marker.on('click', (e)=>{
+
+                            // ★ Shiftで色反転
+                            if(e.originalEvent.shiftKey){
+
+                                const current = labelColorData[key] || "#000";
+                                const next = current === "#fff" ? "#000" : "#fff";
+
+                                labelColorData[key] = next;
+                                localStorage.setItem("labelColors", JSON.stringify(labelColorData));
+
+                                marker.setIcon(L.divIcon({
+                                    className:'label',
+                                    html:`<div style="font-size:${sizeData[key]||12}px;color:${next}">${name}</div>`
+                                }));
+
+                                return;
+                            }
+
+                            // 通常クリック → サイズ変更
+                            let size = prompt("ラベルサイズ(px)", sizeData[key] || 12);
+                            if(!size) return;
+
+                            sizeData[key] = parseInt(size);
+                            localStorage.setItem("sizes", JSON.stringify(sizeData));
+
+                            marker.setIcon(L.divIcon({
+                                className:'label',
+                                html:`<div style="font-size:${sizeData[key]}px;color:${labelColorData[key]||'#000'}">${name}</div>`
+                            }));
+                        });
+
+                        // ドラッグ保存
+                        marker.on('dragend', e=>{
+                            const pos = e.target.getLatLng();
+                            labelPos[key] = {lat:pos.lat,lng:pos.lng};
+                            localStorage.setItem("labels", JSON.stringify(labelPos));
+                        });
+                    }
+                }
+
+            }).addTo(layerGroup);
+
+        }catch(err){
+            console.error(err);
         }
-
-    }).addTo(layerGroup);
+    }
 }
 
 // 星
@@ -400,17 +492,62 @@ function downloadMap(){
     });
 }
 
+function hideLabels(){
+    labelVisible = false;
+    localStorage.setItem("labelVisible", JSON.stringify(labelVisible));
+    labelLayer.clearLayers();
+}
+
+function showLabels(){
+    labelVisible = true;
+    localStorage.setItem("labelVisible", JSON.stringify(labelVisible));
+    render(); // 再描画で復活
+}
+
+function pickColor(color){
+    currentColor = color;
+
+    // 他の選択解除
+    document.querySelectorAll('.color-btn').forEach(btn=>{
+        btn.classList.remove('active');
+    });
+
+    // パレットをアクティブ化
+    document.querySelector('.color-picker-wrap').classList.add('active');
+}
+
+function changeAllLabelSize(){
+    let size = prompt("全ラベルサイズ(px)", 12);
+    if(!size) return;
+
+    size = parseInt(size);
+
+    // 全キーに適用
+    Object.keys(sizeData).forEach(key=>{
+        sizeData[key] = size;
+    });
+
+    // まだサイズ未設定の市区町村にも適用
+    geoData.features.forEach(f=>{
+        const key = f.properties.N03_007;
+        sizeData[key] = size;
+    });
+
+    localStorage.setItem("sizes", JSON.stringify(sizeData));
+
+    render(); // 再描画
+}
+
 function resetAll(){
     if(!confirm("全部リセットしますか？")) return;
     localStorage.clear();
     location.reload();
 }
 
-fetch('N03.geojson')
-.then(res=>res.json())
-.then(data=>{
-    geoData=data;
-    createPrefUI(data);
+createPrefUI({
+    features: PREF_ORDER.map(p=>({
+        properties:{ N03_001: p }
+    }))
 });
 
 // 初期色
