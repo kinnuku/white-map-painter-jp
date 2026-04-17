@@ -2,171 +2,57 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>白地図に色つけちゃうよ～！</title>
+
+<!-- ★ タイトル最適化 -->
+<title>白地図ペイント</title>
+
+<!-- ★ SEO説明 -->
+<meta name="description" content="日本の白地図に色を塗ったり、星や円を配置できる無料ツール。CSV読み込みにも対応し、データ可視化・エリア分析に最適です。ブラウザだけで簡単に使えます。">
+
+<!-- ★ 検索許可（重要） -->
+<meta name="robots" content="index, follow">
+
+<!-- ★ モバイル対応 -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+<!-- ★ OGP（SNSシェア） -->
+<meta property="og:title" content="日本地図ペイントツール｜白地図に色塗り・CSV可視化">
+<meta property="og:description" content="日本地図に色塗り・星・円を配置できる無料ツール。CSVデータの可視化にも対応。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://あなたのURL">
+<meta property="og:image" content="https://あなたのURL/ogp.png">
 
-<style>
-body {
-    margin:0;
-    font-family:sans-serif;
-    display:flex;
-}
+<!-- CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="style.css">
 
-#map {
-    flex:1;
-    height:100vh;
-}
+<!-- JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
-/* ===== コントロール ===== */
-.controls{
-    width:260px;
-    height:100vh;
-    overflow:auto;
-
-    padding:10px;
-    background:#111;
-    color:#fff;
-
-    display:flex;
-    flex-direction:column;
-    gap:10px;
-}
-
-/* ★ 行分け */
-.topbar{
-    display:flex;
-    flex-direction:column;
-    gap:8px;
-}
-
-/* 色行 */
-.color-row{
-    display:flex;
-    gap:8px;
-    align-items:center;
-}
-
-/* ボタン行 */
-.btn-row{
-    display:flex;
-    flex-wrap:wrap;
-    gap:8px;
-}
-
-/* ===== 色ボタン ===== */
-.color-btn{
-    width:26px;
-    height:26px;
-    border-radius:50%;
-    border:2px solid #666;
-    cursor:pointer;
-    transition:0.2s;
-}
-
-.color-btn.active{
-    border:3px solid #fff;
-    transform:scale(1.2);
-}
-
-/* 白用 */
-.color-btn[data-color="#ffffff"]{
-    border:2px solid #999;
-}
-
-/* ===== 通常ボタン ===== */
-button{
-    cursor:pointer;
-    height:38px;
-    padding:0 14px;
-    border-radius:8px;
-    font-size:14px;
-}
-
-/* ===== 都道府県 ===== */
-.pref-list{
-    display:flex;
-    flex-wrap:wrap;
-    gap:6px;
-    max-height:none;
-    overflow:visible;
-}
-
-.pref-list label{
-    font-size:12px;
-    background:#222;
-    padding:3px 6px;
-    border-radius:6px;
-    cursor:pointer;
-}
-
-/* ===== ラベル ===== */
-.label{
-    font-weight:bold;
-    color:#000;
-    text-shadow:1px 1px 2px #fff;
-    white-space:nowrap;
-    cursor:move;
-
-    /* ★ これ追加（四角消す） */
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-}
-
-/* 星の四角消す */
-.star-icon{
-    background: transparent !important;
-    border: none !important;
-}
-
-.leaflet-div-icon {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-.color-picker-wrap{
-    width:26px;
-    height:26px;
-    border-radius:50%;
-    border:2px solid #666;
-    cursor:pointer;
-    position:relative;
-    overflow:hidden;
-
-    /* ★ これが重要：虹グラデーション */
-    background: conic-gradient(
-        red, orange, yellow, lime, cyan, blue, violet, red
-    );
-}
-
-.color-picker-wrap.active{
-    border:3px solid #fff;
-    transform:scale(1.2);
-}
-
-.color-picker-wrap input{
-    position:absolute;
-    inset:0;
-    opacity:0; /* ★ 見えなくする */
-    cursor:pointer;
-}
-
-</style>
 </head>
 
 <body>
 
-<div class="controls">
+<!-- ★ SEO用タイトル（重要） -->
+<h1 style="display:none;">
+日本地図に色塗りできる無料ツール（白地図・CSV対応）
+</h1>
 
+<!-- ★ SEO説明文 -->
+<div style="display:none;">
+このツールは、日本の白地図に色を塗ったり、星や円を配置して
+データを可視化できる無料の地図ツールです。
+CSVファイルの読み込みにも対応しており、営業エリア分析や人口分布の可視化などに活用できます。
+</div>
+
+<div class="controls">
 <div class="topbar">
 
-    <!-- ★ 色 -->
+    <span style="font-size:16px; color:#ccc;">
+    supported By TT
+    </span>
+
     <div class="color-row">
         <div class="color-btn" data-color="#e60000" style="background:#e60000" onclick="setColor('#e60000')"></div>
         <div class="color-btn" data-color="#0070ff" style="background:#0070ff" onclick="setColor('#0070ff')"></div>
@@ -175,387 +61,123 @@ button{
         <div class="color-btn" data-color="#ff9900" style="background:#ff9900" onclick="setColor('#ff9900')"></div>
         <div class="color-btn" data-color="#ff66cc" style="background:#ff66cc" onclick="setColor('#ff66cc')"></div>
         <div class="color-btn" data-color="#66ccff" style="background:#66ccff" onclick="setColor('#66ccff')"></div>
-
-        <!-- ★ カラーパレット追加 -->
         <div class="color-picker-wrap">
             <input type="color" id="colorPicker" value="#9900ff" onchange="pickColor(this.value)">
         </div>
     </div>
 
-    <!-- ★ ボタン -->
-    <div class="btn-row">
-        <button onclick="selectAll(true)">全選択</button>
-        <button onclick="selectAll(false)">全解除</button>
-        <button onclick="resetAll()">リセット</button>
-        <button onclick="changeAllLabelSize()">文字サイズ一括</button>
-        <button onclick="toggleStarMode()">★モード</button>
-        <button onclick="hideLabels()">市区町村削除</button>
-        <button onclick="showLabels()">市区町村復活</button>
-        <button onclick="downloadMap()">画像DL</button>
+    <div class="btn-col">
+
+        <div class="help-wrapper">
+            <span class="help-label">基本的な操作方法</span>
+            <span class="help">？</span>
+
+            <div class="tooltip big-tooltip tooltip-bottom">
+
+                <div class="help-item">
+                    <div class="help-title">■キーボード操作</div>
+                    <div class="help-body">
+                    Ctrl + Z：元に戻す<br>
+                    Ctrl + Y：先に進む
+                    </div>
+                </div>
+
+                <div class="help-item">
+                    <div class="help-title">■通常モード</div>
+                    <div class="help-body">
+                    左クリック：色塗り<br>
+                    右クリック：色削除
+                    </div>
+                </div>
+
+                <div class="help-item">
+                    <div class="help-title">■市区町村ラベル</div>
+                    <div class="help-body">
+                    左クリック：サイズ変更<br>
+                    Shift + 左クリック：白⇔黒<br>
+                    右クリック：削除
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="btn-item">
+            <button onclick="selectAll(true)">日本地図表示</button>
+            <span class="help">？</span>
+            <div class="tooltip">日本地図を表示できます</div>
+        </div>
+
+        <div class="btn-item">
+            <button onclick="selectAll(false)">日本地図非表示</button>
+            <span class="help">？</span>
+            <div class="tooltip">日本地図を非表示にできます</div>
+        </div>
+
+        <div class="btn-item">
+            <button onclick="resetAll()">リセット</button>
+            <span class="help">？</span>
+            <div class="tooltip">表示内容を初期化します</div>
+        </div>
+
+        <div class="btn-item">
+            <button onclick="downloadMap()">画像DL</button>
+            <span class="help">？</span>
+            <div class="tooltip">現在の地図を画像として保存します</div>
+        </div>
+
+        <div class="btn-item">
+            <button onclick="changeAllLabelSize()">文字サイズ一括変更</button>
+            <span class="help">？</span>
+            <div class="tooltip">市区町村の文字サイズを一括変更します</div>
+        </div>
+
+        <div class="btn-item">
+            <button id="starBtn" onclick="toggleStarMode()">★モード</button>
+            <span class="help">？</span>
+            <div class="tooltip">
+                星を配置するモードに切り替えます<br>
+                ・地図上で左クリック：星を追加<br>
+                ・左クリック：サイズ変更<br>
+                ・Shift + 左クリック：色変更<br>
+                ・右クリック：削除
+            </div>
+        </div>
+
+        <div class="btn-item">
+            <button id="circleBtn" onclick="toggleCircleMode()">◯モード</button>
+            <span class="help">？</span>
+            <div class="tooltip">
+                円を配置するモードに切り替えます<br>
+                ・星を左クリック：円を追加<br>
+                ・左クリック：サイズ変更<br>
+                ・Shift + 左クリック：色変更<br>
+                ・右クリック：削除
+            </div>
+        </div>
+
+        <div class="btn-item">
+            <button id="labelToggleBtn" onclick="toggleLabels()">市区町村非表示</button>
+            <span class="help">？</span>
+            <div class="tooltip">市区町村名の表示/非表示を切り替えできます</div>
+        </div>
+
+        <div class="btn-item">
+            <button onclick="document.getElementById('csvInput').click()">CSV読込</button>
+            <span class="help">？</span>
+            <div class="tooltip">指定形式の住所データを地図上に反映できます</div>
+        </div>
+
+        <input type="file" id="csvInput" accept=".csv" style="display:none" onchange="loadCSV(this.files)">
+
     </div>
-
-    <span style="font-size:16px; color:#ccc;">
-    ★通常モード<br>
-    ・左クリック：色塗り<br>
-    ・右クリック：色削除<br>
-    </span>
-
-    <span style="font-size:16px; color:#ccc;">
-    ★市区町村名<br>
-    ・左クリック：サイズ変更<br>
-    ・Shift+左クリック：白⇔黒に変更<br>
-    ・右クリック：削除<br>
-    </span>
-
-    <span style="font-size:16px; color:#ccc;">
-    ★星モード<br>
-    ・地図上で左クリック：星追加<br>
-    ・左クリック：サイズ変更<br>
-    ・Shift+左クリック：色変更<br>
-    ・右クリック：削除
-    </span>
-
 </div>
 
 <div id="prefList" class="pref-list"></div>
-
 </div>
 
 <div id="map"></div>
 
-<script>
-
-const map = L.map('map',{
-    zoomControl:true,
-    attributionControl:false,
-    zoomSnap:0.1,
-    zoomDelta:0.2,
-    wheelPxPerZoomLevel:200,
-    preferCanvas:true
-}).setView([37.5,137],5);
-
-let layerGroup = L.layerGroup().addTo(map);
-let labelLayer = L.layerGroup().addTo(map);
-let starLayer = L.layerGroup().addTo(map);
-
-let geoData=null;
-let currentColor="#e60000";
-
-let colorData=JSON.parse(localStorage.getItem("colors")||"{}");
-let sizeData=JSON.parse(localStorage.getItem("sizes")||"{}");
-let starData=JSON.parse(localStorage.getItem("stars")||"[]");
-let labelPos=JSON.parse(localStorage.getItem("labels")||"{}");
-let labelVisible = JSON.parse(localStorage.getItem("labelVisible") ?? "true");
-let labelColorData = JSON.parse(localStorage.getItem("labelColors")||"{}");
-let geoCache = {};
-
-let used=new Set();
-let starMode=false;
-
-function toggleStarMode(){
-    starMode=!starMode;
-    alert(starMode ? "★モード ON" : "OFF");
-}
-
-function setColor(c){
-    currentColor=c;
-
-    document.querySelectorAll('.color-btn').forEach(btn=>{
-        btn.classList.remove('active');
-    });
-
-    document.querySelectorAll('.color-picker-wrap').forEach(p=>{
-        p.classList.remove('active');
-    });
-
-    const btn = document.querySelector(`[data-color="${c}"]`);
-    if(btn) btn.classList.add('active');
-}
-
-function getName(f){
-    return f.properties.N03_005 || f.properties.N03_004;
-}
-
-const PREF_ORDER=["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県",
-"茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県",
-"新潟県","富山県","石川県","福井県","山梨県","長野県",
-"岐阜県","静岡県","愛知県","三重県",
-"滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県",
-"鳥取県","島根県","岡山県","広島県","山口県",
-"徳島県","香川県","愛媛県","高知県",
-"福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
-
-function createPrefUI(data){
-    const set=new Set(data.features.map(f=>f.properties.N03_001));
-    const container=document.getElementById("prefList");
-
-    PREF_ORDER.forEach(pref=>{
-        if(!set.has(pref)) return;
-        const label=document.createElement("label");
-        label.innerHTML=`<input type="checkbox" value="${pref}">${pref}`;
-        label.querySelector("input").onchange=render;
-        container.appendChild(label);
-    });
-}
-
-function getSelected(){
-    return [...document.querySelectorAll("#prefList input:checked")].map(i=>i.value);
-}
-
-function selectAll(flag){
-    document.querySelectorAll("#prefList input").forEach(i=>i.checked=flag);
-    render();
-}
-
-async function render(){
-
-    layerGroup.clearLayers();
-    labelLayer.clearLayers();
-    used.clear();
-
-    const selected = getSelected();
-    if(selected.length === 0) return;
-
-    for(const pref of selected){
-
-        try{
-            // ★ 都道府県ごとに読み込み
-            const res = await fetch(`geo/${pref}.geojson`);
-            if(!res.ok) throw new Error(pref + " 読み込み失敗");
-
-            const data = await res.json();
-
-            L.geoJSON(data,{
-                style:f=>{
-                    const key=f.properties.N03_007;
-                    return{
-                        color:"#000",
-                        weight:1,
-                        fillColor:colorData[key]||"#fff",
-                        fillOpacity:1
-                    };
-                },
-
-                onEachFeature:(f,layer)=>{
-                    const key=f.properties.N03_007;
-                    const name=getName(f);
-                    if(!name) return;
-
-                    // ===== 色塗り =====
-                    layer.on('click',()=>{
-                        colorData[key]=currentColor;
-                        localStorage.setItem("colors",JSON.stringify(colorData));
-                        layer.setStyle({fillColor:currentColor});
-                    });
-
-                    layer.on('contextmenu',(e)=>{
-                        e.originalEvent.preventDefault();
-                        delete colorData[key];
-                        localStorage.setItem("colors",JSON.stringify(colorData));
-                        layer.setStyle({fillColor:"#fff"});
-                    });
-
-                    // ===== ラベル =====
-                    if(!used.has(key)){
-                        used.add(key);
-
-                        let center = labelPos[key] || layer.getBounds().getCenter();
-
-                        const marker = L.marker(center,{
-                            draggable:true,
-                            icon:L.divIcon({
-                                className:'label',
-                                html:`<div style="font-size:${sizeData[key]||12}px;color:${labelColorData[key]||'#000'}">${name}</div>`
-                            })
-                        }).addTo(labelLayer);
-
-                        // 右クリック削除
-                        marker.on('contextmenu', e=>{
-                            e.originalEvent.preventDefault();
-                            labelLayer.removeLayer(marker);
-                        });
-
-                        // 左クリック
-                        marker.on('click', (e)=>{
-
-                            // ★ Shiftで色反転
-                            if(e.originalEvent.shiftKey){
-
-                                const current = labelColorData[key] || "#000";
-                                const next = current === "#fff" ? "#000" : "#fff";
-
-                                labelColorData[key] = next;
-                                localStorage.setItem("labelColors", JSON.stringify(labelColorData));
-
-                                marker.setIcon(L.divIcon({
-                                    className:'label',
-                                    html:`<div style="font-size:${sizeData[key]||12}px;color:${next}">${name}</div>`
-                                }));
-
-                                return;
-                            }
-
-                            // 通常クリック → サイズ変更
-                            let size = prompt("ラベルサイズ(px)", sizeData[key] || 12);
-                            if(!size) return;
-
-                            sizeData[key] = parseInt(size);
-                            localStorage.setItem("sizes", JSON.stringify(sizeData));
-
-                            marker.setIcon(L.divIcon({
-                                className:'label',
-                                html:`<div style="font-size:${sizeData[key]}px;color:${labelColorData[key]||'#000'}">${name}</div>`
-                            }));
-                        });
-
-                        // ドラッグ保存
-                        marker.on('dragend', e=>{
-                            const pos = e.target.getLatLng();
-                            labelPos[key] = {lat:pos.lat,lng:pos.lng};
-                            localStorage.setItem("labels", JSON.stringify(labelPos));
-                        });
-                    }
-                }
-
-            }).addTo(layerGroup);
-
-        }catch(err){
-            console.error(err);
-        }
-    }
-}
-
-// 星
-map.on('click', e=>{
-    if(!starMode) return;
-
-    let size=prompt("星サイズ(px)",20);
-    if(!size) return;
-
-    const s={lat:e.latlng.lat,lng:e.latlng.lng,size:parseInt(size),color:"gold"};
-    starData.push(s);
-    localStorage.setItem("stars",JSON.stringify(starData));
-    addStar(s);
-});
-
-function addStar(s){
-    const marker=L.marker([s.lat,s.lng],{
-        draggable:true,
-        icon:L.divIcon({
-            className:'star-icon',
-            html:`<div style="font-size:${s.size}px;color:${s.color};text-shadow:1px 1px 2px #000;">★</div>`
-        })
-    }).addTo(starLayer);
-
-    marker.on('dragend',e=>{
-        s.lat=e.target.getLatLng().lat;
-        s.lng=e.target.getLatLng().lng;
-        localStorage.setItem("stars",JSON.stringify(starData));
-    });
-
-    marker.on('click',(e)=>{
-        if(e.originalEvent.shiftKey){
-            let color=prompt("色",s.color);
-            if(!color) return;
-            s.color=color;
-        }else{
-            let size=prompt("サイズ(px)",s.size);
-            if(!size) return;
-            s.size=parseInt(size);
-        }
-
-        localStorage.setItem("stars",JSON.stringify(starData));
-
-        marker.setIcon(L.divIcon({
-            className:'star-icon',
-            html:`<div style="font-size:${s.size}px;color:${s.color};text-shadow:1px 1px 2px #000;">★</div>`
-        }));
-    });
-
-    marker.on('contextmenu',e=>{
-        e.originalEvent.preventDefault();
-        starLayer.removeLayer(marker);
-    });
-}
-
-// DL
-function downloadMap(){
-    html2canvas(document.getElementById("map"),{
-        useCORS:true,
-        scale:2,
-        backgroundColor:null
-    }).then(canvas=>{
-        const link=document.createElement("a");
-        link.download="japan_map.png";
-        link.href=canvas.toDataURL("image/png");
-        link.click();
-    });
-}
-
-function hideLabels(){
-    labelVisible = false;
-    localStorage.setItem("labelVisible", JSON.stringify(labelVisible));
-    labelLayer.clearLayers();
-}
-
-function showLabels(){
-    labelVisible = true;
-    localStorage.setItem("labelVisible", JSON.stringify(labelVisible));
-    render(); // 再描画で復活
-}
-
-function pickColor(color){
-    currentColor = color;
-
-    // 他の選択解除
-    document.querySelectorAll('.color-btn').forEach(btn=>{
-        btn.classList.remove('active');
-    });
-
-    // パレットをアクティブ化
-    document.querySelector('.color-picker-wrap').classList.add('active');
-}
-
-function changeAllLabelSize(){
-    let size = prompt("全ラベルサイズ(px)", 12);
-    if(!size) return;
-
-    size = parseInt(size);
-
-    // 全キーに適用
-    Object.keys(sizeData).forEach(key=>{
-        sizeData[key] = size;
-    });
-
-    // まだサイズ未設定の市区町村にも適用
-    geoData.features.forEach(f=>{
-        const key = f.properties.N03_007;
-        sizeData[key] = size;
-    });
-
-    localStorage.setItem("sizes", JSON.stringify(sizeData));
-
-    render(); // 再描画
-}
-
-function resetAll(){
-    if(!confirm("全部リセットしますか？")) return;
-    localStorage.clear();
-    location.reload();
-}
-
-createPrefUI({
-    features: PREF_ORDER.map(p=>({
-        properties:{ N03_001: p }
-    }))
-});
-
-// 初期色
-setTimeout(()=>setColor(currentColor),100);
-
-starData.forEach(addStar);
-
-</script>
-
+<script src="app.js"></script>
 </body>
 </html>
