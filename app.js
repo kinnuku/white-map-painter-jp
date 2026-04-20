@@ -677,7 +677,7 @@ function changeAllLabelSize(){
 function hideLabels(){
     const prev = labelVisible;
     labelVisible = false; saveLabelVisible(); labelLayer.clearLayers(); labelMarkers = {};
-    pushHistory(`市区町村削除`,
+    pushHistory(`市区町村名表示`,
         () => { labelVisible=prev; saveLabelVisible(); render(); },
         () => { labelVisible=false; saveLabelVisible(); labelLayer.clearLayers(); labelMarkers={}; }
     );
@@ -685,7 +685,7 @@ function hideLabels(){
 function showLabels(){
     const prev = labelVisible;
     labelVisible = true; saveLabelVisible(); render();
-    pushHistory(`市区町村復活`,
+    pushHistory(`市区町村名非表示`,
         () => { labelVisible=prev; saveLabelVisible(); render(); },
         () => { labelVisible=true; saveLabelVisible(); render(); }
     );
@@ -775,7 +775,7 @@ createPrefUI({ features: PREF_ORDER.map(p => ({ properties:{ N03_001:p } })) });
 setTimeout(() => {
     setColor(currentColor);
     document.getElementById("labelToggleBtn").textContent =
-        labelVisible ? "市区町村非表示" : "市区町村表示";
+        labelVisible ? "市区町村名非表示" : "市区町村名表示";
 }, 100);
 starData.forEach(s => addStar(s));
 
