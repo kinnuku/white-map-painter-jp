@@ -152,6 +152,21 @@ function selectAll(flag){
     document.querySelectorAll("#prefList input").forEach(i => i.checked = flag);
     render();
 }
+
+let mapVisible = false; // 初期は表示中
+
+function toggleJapanMap(){
+    if(mapVisible){
+        selectAll(false); // 非表示
+        document.getElementById("toggleMapBtn").textContent = "日本地図表示";
+    }else{
+        selectAll(true); // 表示
+        document.getElementById("toggleMapBtn").textContent = "日本地図非表示";
+    }
+
+    mapVisible = !mapVisible;
+}
+
 function getName(f){ return f.properties.N03_005 || f.properties.N03_004; }
 
 /* =====================================================
