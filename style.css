@@ -9,14 +9,17 @@ body {
 }
 .controls{
     width:260px;
-    height:100vh;
-    overflow:auto;
+    height:calc(100vh - 60px);
+    margin-top:60px;
+    overflow-y:auto;
+    overflow-x:hidden; /* 横スクロール禁止 */
     padding:10px;
     background:#222;
     color:#fff;
     display:flex;
     flex-direction:column;
     gap:10px;
+    box-sizing:border-box;
 }
 .topbar{
     display:flex;
@@ -96,6 +99,11 @@ button{
     border: none !important;
     box-shadow: none !important;
 }
+
+.leaflet-top{
+    top:70px !important;
+}
+
 .color-picker-wrap{
     width:26px;
     height:26px;
@@ -183,30 +191,32 @@ button.active {
 }
 
 .tooltip {
-  position: absolute;
-  bottom: 120%;   /* ← 上に出す */
-  left: 0;
+    position: absolute;
+    bottom: 120%;   /* ← 上に出す */
+    left: 0;
 
-  background: #222;
-  color: #fff;
-  padding: 10px 12px;
+    background: #222;
+    color: #fff;
+    padding: 10px 12px;
 
-  border-radius: 8px;
-  font-size: 14px;
+    border-radius: 8px;
+    font-size: 14px;
 
-  width: 260px;         /* ← 横幅しっかり使う */
-  max-width: 300px;     /* ← 上限も設定 */
-  line-height: 1.5;
+    width:100%;
+    max-width:100%;
+    line-height: 1.5;
 
-  word-break: break-word;
-  z-index: 9999;
+    white-space:normal;
+    overflow-wrap:break-word;
+    word-break:break-word;
+    z-index: 9999;
 
 
-  /* アニメーション系 */
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(5px);
-  transition: 0.2s;
+    /* アニメーション系 */
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(5px);
+    transition: 0.2s;
 }
 
 .help:hover + .tooltip {
@@ -250,4 +260,22 @@ button.active {
 .tooltip-bottom {
   top: 120%;     /* ← 下に出す */
   bottom: auto;  /* ← 上指定を無効化 */
+}
+
+/* ヘッダー */
+.site-header{
+ position:fixed;
+ top:0;
+ left:0;
+ width:100%;
+ height:60px;
+
+ color:#111;
+ background:white;
+
+ display:flex;
+ justify-content:center;
+ align-items:center;
+
+ z-index:9999;
 }

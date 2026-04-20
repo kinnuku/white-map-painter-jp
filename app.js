@@ -1,4 +1,3 @@
-
 /* =====================================================
    アンドゥ・リドゥ基盤
    各操作は pushHistory(説明, undoFn, redoFn) で登録。
@@ -208,7 +207,7 @@ async function render(){
 
                     /* 色塗り */
                     layer.on('click', () => {
-                        if (starMode) return;
+                        if (starMode || circleMode) return;
                         const prev = colorData[key] || null;
                         const next = currentColor;
                         if(prev === next) return;
@@ -324,31 +323,71 @@ function addLabelMarker(key, safeName, center){
    星
    ===================================================== */
 
-function toggleStarMode() {
-    starMode = !starMode;
+function toggleStarMode(forceValue=null){
 
-    document.getElementById("starBtn").classList.toggle("active", starMode);
-
-    // もし排他にしたいなら
-    if (starMode) {
-        circleMode = false;
-        document.getElementById("circleBtn").classList.remove("active");
+    if(forceValue === null){
+        starMode = !starMode;
+    }else{
+        starMode = forceValue;
     }
+
+    document.getElementById("starBtn")
+        .classList.toggle("active", starMode);
+
+    if(starMode){
+        toggleCircleMode(false);
+    }
+
+    // ★重要
+    const pane = map.getPane("starPane");
+
+    if(starMode){
+        pane.style.pointerEvents="auto";
+    }else{
+        pane.style.pointerEvents="none";
+    }
+}
+
+function setCircleInteractive(flag){
+    leafletCircles.forEach(c => {
+        if(c._path){
+            if(flag){
+                L.DomUtil.removeClass(c._path, "leaflet-interactive");
+                c._path.classList.add("leaflet-interactive");
+            }else{
+                c._path.classList.remove("leaflet-interactive");
+            }
+        }
+    });
 }
 
 /* =====================================================
    円
    ===================================================== */
 
-function toggleCircleMode() {
-    circleMode = !circleMode;
+function toggleCircleMode(forceValue=null){
 
-    document.getElementById("circleBtn").classList.toggle("active", circleMode);
+    if(forceValue === null){
+        circleMode = !circleMode;
+    }else{
+        circleMode = forceValue;
+    }
 
-    // 排他
-    if (circleMode) {
+    document.getElementById("circleBtn")
+        .classList.toggle("active", circleMode);
+
+    if(circleMode){
         starMode = false;
         document.getElementById("starBtn").classList.remove("active");
+    }
+
+    // ★これが重要
+    const pane = map.getPane("circlePane");
+
+    if(circleMode){
+        pane.style.pointerEvents = "auto";
+    }else{
+        pane.style.pointerEvents = "none";
     }
 }
 
@@ -369,6 +408,7 @@ map.on('click', e => {
     const s = { lat:e.latlng.lat, lng:e.latlng.lng, size:sz, color:"#ffd700", circles:[] };
     starData.push(s); saveStars();
     addStar(s);
+    toggleStarMode(false);
 
     pushHistory(`★追加`,
         () => {
@@ -412,6 +452,7 @@ function addStar(s){
                 () => { const i=s.circles.indexOf(c); if(i!==-1) s.circles.splice(i,1); saveStars(); if(leafletCircles.has(c)){ circleLayer.removeLayer(leafletCircles.get(c)); leafletCircles.delete(c); } },
                 () => { s.circles.push(c); saveStars(); addCircle(s,c); }
             );
+            toggleCircleMode(false);
             return;
         }
 
@@ -468,47 +509,142 @@ function addCircle(s, circleObj){
     const lc = L.circle([circleObj.lat, circleObj.lng], {
         pane: "circlePane",
         radius: circleObj.radiusKm * 1000,
-        color: circleObj.color, fillColor: circleObj.color,
-        fillOpacity: 0.2, weight: 2
+        color: circleObj.color,
+        fillColor: circleObj.color,
+        fillOpacity: 0.2,
+        weight: 2,
+        interactive: circleMode,
     }).addTo(circleLayer);
+
     leafletCircles.set(circleObj, lc);
 
     /* クリック */
     lc.on('click', function(ev){
+
+        // 円モードOFFなら通常モード（何もしない）
+        if(!circleMode) return;
+
         /* Shift → 色変更 */
         if(ev.originalEvent && ev.originalEvent.shiftKey){
             const prev = circleObj.color, next = currentColor;
-            circleObj.color = next; saveStars();
-            this.setStyle({ color:next, fillColor:next });
+            circleObj.color = next;
+            saveStars();
+
+            this.setStyle({
+                color: next,
+                fillColor: next
+            });
+
             pushHistory(`円色変更`,
-                () => { circleObj.color=prev; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setStyle({color:prev,fillColor:prev}); },
-                () => { circleObj.color=next; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setStyle({color:next,fillColor:next}); }
+                () => {
+                    circleObj.color = prev;
+                    saveStars();
+                    if(leafletCircles.has(circleObj)){
+                        leafletCircles.get(circleObj).setStyle({
+                            color: prev,
+                            fillColor: prev
+                        });
+                    }
+                },
+                () => {
+                    circleObj.color = next;
+                    saveStars();
+                    if(leafletCircles.has(circleObj)){
+                        leafletCircles.get(circleObj).setStyle({
+                            color: next,
+                            fillColor: next
+                        });
+                    }
+                }
             );
             return;
         }
+
         /* 半径変更 */
         const input = prompt("半径（km）", circleObj.radiusKm);
+
         if(input === null) return;
+
         const val = Number(input);
-        if(!Number.isFinite(val) || val <= 0){ alert("正しい数値を入力してください"); return; }
-        const prev = circleObj.radiusKm, next = val;
-        circleObj.radiusKm = next; saveStars();
+
+        if(!Number.isFinite(val) || val <= 0){
+            alert("正しい数値を入力してください");
+            return;
+        }
+
+        const prev = circleObj.radiusKm;
+        const next = val;
+
+        circleObj.radiusKm = next;
+        saveStars();
+
         this.setRadius(next * 1000);
+
         pushHistory(`円半径変更`,
-            () => { circleObj.radiusKm=prev; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setRadius(prev*1000); },
-            () => { circleObj.radiusKm=next; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setRadius(next*1000); }
+            () => {
+                circleObj.radiusKm = prev;
+                saveStars();
+
+                if(leafletCircles.has(circleObj)){
+                    leafletCircles.get(circleObj).setRadius(prev * 1000);
+                }
+            },
+            () => {
+                circleObj.radiusKm = next;
+                saveStars();
+
+                if(leafletCircles.has(circleObj)){
+                    leafletCircles.get(circleObj).setRadius(next * 1000);
+                }
+            }
         );
     });
 
     /* 右クリック削除 */
     lc.on('contextmenu', ev => {
+
+        // 円モードOFFなら通常モード（削除しない）
+        if(!circleMode) return;
+
         ev.originalEvent.preventDefault();
-        circleLayer.removeLayer(lc); leafletCircles.delete(circleObj);
+
+        circleLayer.removeLayer(lc);
+        leafletCircles.delete(circleObj);
+
         const i = s.circles ? s.circles.indexOf(circleObj) : -1;
-        if(i !== -1) s.circles.splice(i,1); saveStars();
+
+        if(i !== -1){
+            s.circles.splice(i,1);
+        }
+
+        saveStars();
+
         pushHistory(`円削除`,
-            () => { if(!s.circles) s.circles=[]; s.circles.push(circleObj); saveStars(); addCircle(s,circleObj); },
-            () => { const j=s.circles?s.circles.indexOf(circleObj):-1; if(j!==-1) s.circles.splice(j,1); saveStars(); if(leafletCircles.has(circleObj)){ circleLayer.removeLayer(leafletCircles.get(circleObj)); leafletCircles.delete(circleObj); } }
+            () => {
+                if(!s.circles) s.circles=[];
+
+                s.circles.push(circleObj);
+
+                saveStars();
+
+                addCircle(s,circleObj);
+            },
+            () => {
+                const j = s.circles ? s.circles.indexOf(circleObj) : -1;
+
+                if(j !== -1){
+                    s.circles.splice(j,1);
+                }
+
+                saveStars();
+
+                if(leafletCircles.has(circleObj)){
+                    circleLayer.removeLayer(
+                        leafletCircles.get(circleObj)
+                    );
+                    leafletCircles.delete(circleObj);
+                }
+            }
         );
     });
 
@@ -559,10 +695,19 @@ function showLabels(){
    その他
    ===================================================== */
 function downloadMap(){
-    html2canvas(document.getElementById("map"),{ useCORS:true, scale:2, backgroundColor:null }).then(canvas=>{
-        const a = document.createElement("a");
-        a.download = "japan_map.png"; a.href = canvas.toDataURL("image/png"); a.click();
-    });
+
+ html2canvas(
+   document.querySelector("#map")
+ ).then(canvas=>{
+
+   const a=document.createElement("a");
+   a.download="map.png";
+   a.href=canvas.toDataURL();
+
+   a.click();
+
+ });
+
 }
 function resetAll(){
     if(!confirm("全部リセットしますか？")) return;
@@ -595,7 +740,7 @@ function toggleLabels(){
 
     // ボタン表示変更
     document.getElementById("labelToggleBtn").textContent =
-        labelVisible ? "市区町村非表示" : "市区町村表示";
+        labelVisible ? "市区町村名非表示" : "市区町村名表示";
 
     pushHistory(`市区町村表示切替`,
         () => {
@@ -607,7 +752,7 @@ function toggleLabels(){
                 labelMarkers = {};
             }
             document.getElementById("labelToggleBtn").textContent =
-                labelVisible ? "市区町村非表示" : "市区町村表示";
+                labelVisible ? "市区町村名非表示" : "市区町村名表示";
         },
         () => {
             labelVisible = !prev;
@@ -618,7 +763,7 @@ function toggleLabels(){
                 labelMarkers = {};
             }
             document.getElementById("labelToggleBtn").textContent =
-                labelVisible ? "市区町村非表示" : "市区町村表示";
+                labelVisible ? "市区町村名非表示" : "市区町村名表示";
         }
     );
 }
@@ -633,6 +778,9 @@ setTimeout(() => {
         labelVisible ? "市区町村非表示" : "市区町村表示";
 }, 100);
 starData.forEach(s => addStar(s));
+
+toggleCircleMode(false);
+toggleStarMode(false);
 
 /* =========================
    CSV設定
@@ -728,7 +876,8 @@ function addCsvCircle(circleObj){
         color: circleObj.color,
         fillColor: circleObj.color,
         fillOpacity: 0.7,
-        weight: 2
+        weight: 2,
+        interactive: circleMode,
     }).addTo(circleLayer);
 
     leafletCircles.set(circleObj, lc);
