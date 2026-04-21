@@ -788,11 +788,11 @@ toggleStarMode(false);
 
 // 人数 → 半径（km）
 function getRadiusByPeople(n){
-    if(n <= 4) return 0.5;
-    if(n <= 9) return 1.0;
-    if(n <= 24) return 1.5;
-    if(n <= 49) return 2.0;
-    return 2.5;
+    if(n <= 4) return 0.1;
+    if(n <= 9) return 0.3;
+    if(n <= 24) return 0.5;
+    if(n <= 49) return 0.7;
+    return 1.0;
 }
 
 // フラグ → 色
