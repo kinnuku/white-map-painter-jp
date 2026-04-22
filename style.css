@@ -279,3 +279,28 @@ button.active {
 
  z-index:9999;
 }
+
+/* フリーテキストアイコン */
+.free-text-icon {
+    background: transparent !important;
+    border: none !important;
+}
+ 
+.free-text-inner {
+    white-space: nowrap;
+    font-weight: bold;
+    cursor: pointer;
+    text-shadow: 1px 1px 3px rgba(255,255,255,0.8), -1px -1px 3px rgba(255,255,255,0.8);
+    user-select: none;
+    line-height: 1.2;
+}
+ 
+/* 全モードボタンの active 時は青 */
+#starBtn.active,
+#circleBtn.active,
+#textBtn.active,
+#csvEditBtn.active {
+    background: #0070ff;
+    color: #fff;
+    border-color: #0070ff;
+}
