@@ -58,19 +58,28 @@ const map = L.map('map',{
 }).setView([37.5,137],5);
 
 map.createPane("polygonPane");
-map.createPane("circlePane");
+map.createPane("circlePane");   /* 星に紐づく円（circleMode時のみ操作可） */
+map.createPane("csvPane");      /* CSV円専用（常時操作可） */
 map.createPane("starPane");
 map.createPane("labelPane");
+map.createPane("textPane");
 
 map.getPane("polygonPane").style.zIndex = 300;
-map.getPane("circlePane").style.zIndex = 450;
-map.getPane("starPane").style.zIndex = 500;
-map.getPane("labelPane").style.zIndex = 550;
+map.getPane("circlePane").style.zIndex  = 450;
+map.getPane("csvPane").style.zIndex     = 460;  /* circlePane より前面 */
+map.getPane("starPane").style.zIndex    = 500;
+map.getPane("labelPane").style.zIndex   = 550;
+map.getPane("textPane").style.zIndex    = 600;
 
-let layerGroup  = L.layerGroup().addTo(map);
-let labelLayer  = L.layerGroup().addTo(map);
-let starLayer   = L.layerGroup().addTo(map);
-let circleLayer = L.layerGroup().addTo(map);
+/* csvPane は CSV編集モード時のみ操作可 */
+map.getPane("csvPane").style.pointerEvents = "none";
+
+let layerGroup     = L.layerGroup().addTo(map);
+let labelLayer     = L.layerGroup().addTo(map);
+let starLayer      = L.layerGroup().addTo(map);
+let circleLayer    = L.layerGroup().addTo(map);
+let csvCircleLayer = L.layerGroup().addTo(map);  /* CSV円専用レイヤー */
+let textLayer      = L.layerGroup().addTo(map);
 
 let currentColor = "#e60000";
 
@@ -81,17 +90,27 @@ let labelPos       = JSON.parse(localStorage.getItem("labels")       || "{}");
 let labelVisible   = JSON.parse(localStorage.getItem("labelVisible") ?? "true");
 let labelColorData = JSON.parse(localStorage.getItem("labelColors")  || "{}");
 
+/* ★フリーテキストデータ */
+let freeTextData   = JSON.parse(localStorage.getItem("freeTexts")   || "[]");
+const saveFreeTexts = () => localStorage.setItem("freeTexts", JSON.stringify(freeTextData));
+
 let geoCache     = {};
 let renderedKeys = new Set();
 let used         = new Set();
 let starMode     = false;
 let circleMode   = false;
+let textMode     = false;
+let csvEditMode  = false;  /* CSV円編集モード */
 
 /* Leafletオブジェクト参照 */
 let labelMarkers   = {};          /* key -> L.marker */
 let starMarkers    = new Map();   /* starObj -> L.marker */
 let leafletCircles = new Map();   /* circleObj -> L.circle */
+let textMarkers    = new Map();   /* textObj -> L.marker */
 let polygonLayer = L.layerGroup().addTo(map);
+
+/* CSVで追加した円を別途管理 */
+let csvCircleObjects = [];        /* ★CSV円オブジェクト配列 */
 
 /* =====================================================
    保存ユーティリティ
@@ -152,17 +171,16 @@ function selectAll(flag){
     render();
 }
 
-let mapVisible = false; // 初期は表示中
+let mapVisible = false;
 
 function toggleJapanMap(){
     if(mapVisible){
-        selectAll(false); // 非表示
+        selectAll(false);
         document.getElementById("toggleMapBtn").textContent = "日本地図表示";
     }else{
-        selectAll(true); // 表示
+        selectAll(true);
         document.getElementById("toggleMapBtn").textContent = "日本地図非表示";
     }
-
     mapVisible = !mapVisible;
 }
 
@@ -205,9 +223,8 @@ async function render(){
                     if(!name) return;
                     renderedKeys.add(key);
 
-                    /* 色塗り */
                     layer.on('click', () => {
-                        if (starMode || circleMode) return;
+                        if (starMode || circleMode || textMode) return;
                         const prev = colorData[key] || null;
                         const next = currentColor;
                         if(prev === next) return;
@@ -230,7 +247,6 @@ async function render(){
                         );
                     });
 
-                    /* ラベル */
                     if(labelVisible && !used.has(key)){
                         used.add(key);
                         const center = labelPos[key] || layer.getBounds().getCenter();
@@ -245,6 +261,7 @@ async function render(){
     circleLayer.bringToFront();
     starLayer.bringToFront();
     labelLayer.bringToFront();
+    textLayer.bringToFront();
 }
 
 /* =====================================================
@@ -264,7 +281,6 @@ function addLabelMarker(key, safeName, center){
     const marker = L.marker(center, { pane: "labelPane", draggable:true, icon: makeLabelIcon(key, safeName) }).addTo(labelLayer);
     labelMarkers[key] = marker;
 
-    /* 右クリック削除 */
     marker.on('contextmenu', e => {
         e.originalEvent.preventDefault();
         labelLayer.removeLayer(marker);
@@ -276,9 +292,7 @@ function addLabelMarker(key, safeName, center){
         );
     });
 
-    /* 左クリック */
     marker.on('click', e => {
-        /* Shift → 白黒反転 */
         if(e.originalEvent.shiftKey){
             const prev = labelColorData[key] || "#000";
             const next = prev === "#fff" ? "#000" : "#fff";
@@ -290,7 +304,6 @@ function addLabelMarker(key, safeName, center){
             );
             return;
         }
-        /* サイズ変更 */
         const input = prompt("ラベルサイズ(px)", sizeData[key] || 12);
         const next = parseFontSize(input);
         if(next === null){ if(input !== null) alert("1〜300 の数字で入力してください。"); return; }
@@ -303,7 +316,6 @@ function addLabelMarker(key, safeName, center){
         );
     });
 
-    /* ドラッグ */
     let dragFrom = null;
     marker.on('dragstart', () => { dragFrom = marker.getLatLng(); });
     marker.on('dragend', e => {
@@ -324,28 +336,19 @@ function addLabelMarker(key, safeName, center){
    ===================================================== */
 
 function toggleStarMode(forceValue=null){
-
     if(forceValue === null){
         starMode = !starMode;
     }else{
         starMode = forceValue;
     }
-
-    document.getElementById("starBtn")
-        .classList.toggle("active", starMode);
-
+    document.getElementById("starBtn").classList.toggle("active", starMode);
     if(starMode){
         toggleCircleMode(false);
+        toggleTextMode(false);
+        toggleCsvEditMode(false);
     }
-
-    // ★重要
     const pane = map.getPane("starPane");
-
-    if(starMode){
-        pane.style.pointerEvents="auto";
-    }else{
-        pane.style.pointerEvents="none";
-    }
+    pane.style.pointerEvents = starMode ? "auto" : "none";
 }
 
 function setCircleInteractive(flag){
@@ -366,29 +369,20 @@ function setCircleInteractive(flag){
    ===================================================== */
 
 function toggleCircleMode(forceValue=null){
-
     if(forceValue === null){
         circleMode = !circleMode;
     }else{
         circleMode = forceValue;
     }
-
-    document.getElementById("circleBtn")
-        .classList.toggle("active", circleMode);
-
+    document.getElementById("circleBtn").classList.toggle("active", circleMode);
     if(circleMode){
         starMode = false;
         document.getElementById("starBtn").classList.remove("active");
+        toggleTextMode(false);
+        toggleCsvEditMode(false);
     }
-
-    // ★これが重要
     const pane = map.getPane("circlePane");
-
-    if(circleMode){
-        pane.style.pointerEvents = "auto";
-    }else{
-        pane.style.pointerEvents = "none";
-    }
+    pane.style.pointerEvents = circleMode ? "auto" : "none";
 }
 
 function makeStarIcon(s){
@@ -400,6 +394,38 @@ function makeStarIcon(s){
 }
 
 map.on('click', e => {
+    /* ★フリーテキストモード */
+    if(textMode){
+        const inputText = prompt("テキストを入力してください", "テキスト");
+        if(inputText === null || inputText.trim() === "") return;
+        const sizeInput = prompt("フォントサイズ(px)", 16);
+        const sz = parseFontSize(sizeInput);
+        if(sz === null){ if(sizeInput !== null) alert("1〜300 の数字で入力してください。"); return; }
+
+        const t = {
+            lat: e.latlng.lat,
+            lng: e.latlng.lng,
+            text: inputText.trim(),
+            size: sz,
+            color: "#000000"
+        };
+        freeTextData.push(t);
+        saveFreeTexts();
+        addFreeText(t);
+        toggleTextMode(false);
+
+        pushHistory(`テキスト追加`,
+            () => {
+                const i = freeTextData.indexOf(t);
+                if(i !== -1) freeTextData.splice(i, 1);
+                saveFreeTexts();
+                if(textMarkers.has(t)){ textLayer.removeLayer(textMarkers.get(t)); textMarkers.delete(t); }
+            },
+            () => { freeTextData.push(t); saveFreeTexts(); addFreeText(t); }
+        );
+        return;
+    }
+
     if(!starMode) return;
     const input = prompt("星サイズ(px)", 20);
     const sz = parseFontSize(input);
@@ -425,7 +451,6 @@ function addStar(s){
     const marker = L.marker([s.lat, s.lng], { pane: "starPane", draggable:true, icon:makeStarIcon(s) }).addTo(starLayer);
     starMarkers.set(s, marker);
 
-    /* ドラッグ */
     let dragFrom = null;
     marker.on('dragstart', () => { dragFrom = marker.getLatLng(); });
     marker.on('dragend', e => {
@@ -437,10 +462,7 @@ function addStar(s){
         );
     });
 
-    /* クリック */
     marker.on('click', e => {
-
-        /* 円モード */
         if(circleMode){
             const km = prompt("この星を中心に半径（km）", 10);
             if(km === null) return;
@@ -455,8 +477,6 @@ function addStar(s){
             toggleCircleMode(false);
             return;
         }
-
-        /* Shift → 色変更 */
         if(e.originalEvent.shiftKey){
             const prev = s.color, next = currentColor;
             s.color = next; saveStars();
@@ -467,8 +487,6 @@ function addStar(s){
             );
             return;
         }
-
-        /* サイズ変更 */
         const input = prompt("サイズ(px)", s.size);
         const next = parseFontSize(input);
         if(next === null){ if(input !== null) alert("1〜300 の数字で入力してください。"); return; }
@@ -481,7 +499,6 @@ function addStar(s){
         );
     });
 
-    /* 右クリック削除 */
     marker.on('contextmenu', e => {
         e.originalEvent.preventDefault();
         const i = starData.indexOf(s); if(i!==-1) starData.splice(i,1); saveStars();
@@ -497,7 +514,6 @@ function addStar(s){
         );
     });
 
-    /* 既存の円を復元 */
     s.circles.forEach(c => addCircle(s, c));
     return marker;
 }
@@ -518,137 +534,187 @@ function addCircle(s, circleObj){
 
     leafletCircles.set(circleObj, lc);
 
-    /* クリック */
     lc.on('click', function(ev){
-
-        // 円モードOFFなら通常モード（何もしない）
         if(!circleMode) return;
-
-        /* Shift → 色変更 */
         if(ev.originalEvent && ev.originalEvent.shiftKey){
             const prev = circleObj.color, next = currentColor;
             circleObj.color = next;
             saveStars();
-
-            this.setStyle({
-                color: next,
-                fillColor: next
-            });
-
+            this.setStyle({ color: next, fillColor: next });
             pushHistory(`円色変更`,
-                () => {
-                    circleObj.color = prev;
-                    saveStars();
-                    if(leafletCircles.has(circleObj)){
-                        leafletCircles.get(circleObj).setStyle({
-                            color: prev,
-                            fillColor: prev
-                        });
-                    }
-                },
-                () => {
-                    circleObj.color = next;
-                    saveStars();
-                    if(leafletCircles.has(circleObj)){
-                        leafletCircles.get(circleObj).setStyle({
-                            color: next,
-                            fillColor: next
-                        });
-                    }
-                }
+                () => { circleObj.color = prev; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setStyle({color:prev,fillColor:prev}); },
+                () => { circleObj.color = next; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setStyle({color:next,fillColor:next}); }
             );
             return;
         }
-
-        /* 半径変更 */
         const input = prompt("半径（km）", circleObj.radiusKm);
-
         if(input === null) return;
-
         const val = Number(input);
-
-        if(!Number.isFinite(val) || val <= 0){
-            alert("正しい数値を入力してください");
-            return;
-        }
-
+        if(!Number.isFinite(val) || val <= 0){ alert("正しい数値を入力してください"); return; }
         const prev = circleObj.radiusKm;
         const next = val;
-
-        circleObj.radiusKm = next;
-        saveStars();
-
+        circleObj.radiusKm = next; saveStars();
         this.setRadius(next * 1000);
-
         pushHistory(`円半径変更`,
-            () => {
-                circleObj.radiusKm = prev;
-                saveStars();
-
-                if(leafletCircles.has(circleObj)){
-                    leafletCircles.get(circleObj).setRadius(prev * 1000);
-                }
-            },
-            () => {
-                circleObj.radiusKm = next;
-                saveStars();
-
-                if(leafletCircles.has(circleObj)){
-                    leafletCircles.get(circleObj).setRadius(next * 1000);
-                }
-            }
+            () => { circleObj.radiusKm=prev; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setRadius(prev*1000); },
+            () => { circleObj.radiusKm=next; saveStars(); if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setRadius(next*1000); }
         );
     });
 
-    /* 右クリック削除 */
     lc.on('contextmenu', ev => {
-
-        // 円モードOFFなら通常モード（削除しない）
         if(!circleMode) return;
-
         ev.originalEvent.preventDefault();
-
         circleLayer.removeLayer(lc);
         leafletCircles.delete(circleObj);
-
         const i = s.circles ? s.circles.indexOf(circleObj) : -1;
-
-        if(i !== -1){
-            s.circles.splice(i,1);
-        }
-
+        if(i !== -1) s.circles.splice(i,1);
         saveStars();
-
         pushHistory(`円削除`,
-            () => {
-                if(!s.circles) s.circles=[];
-
-                s.circles.push(circleObj);
-
-                saveStars();
-
-                addCircle(s,circleObj);
-            },
+            () => { if(!s.circles) s.circles=[]; s.circles.push(circleObj); saveStars(); addCircle(s,circleObj); },
             () => {
                 const j = s.circles ? s.circles.indexOf(circleObj) : -1;
-
-                if(j !== -1){
-                    s.circles.splice(j,1);
-                }
-
+                if(j !== -1) s.circles.splice(j,1);
                 saveStars();
-
-                if(leafletCircles.has(circleObj)){
-                    circleLayer.removeLayer(
-                        leafletCircles.get(circleObj)
-                    );
-                    leafletCircles.delete(circleObj);
-                }
+                if(leafletCircles.has(circleObj)){ circleLayer.removeLayer(leafletCircles.get(circleObj)); leafletCircles.delete(circleObj); }
             }
         );
     });
 
     return lc;
+}
+
+/* =====================================================
+   フリーテキスト機能  ★新規追加
+   ===================================================== */
+
+function toggleTextMode(forceValue=null){
+    if(forceValue === null){
+        textMode = !textMode;
+    }else{
+        textMode = forceValue;
+    }
+    document.getElementById("textBtn").classList.toggle("active", textMode);
+    if(textMode){
+        toggleStarMode(false);
+        toggleCircleMode(false);
+        toggleCsvEditMode(false);
+    }
+    map.getPane("textPane").style.pointerEvents = "auto";
+}
+
+/* =====================================================
+   CSV編集モード  ★新規追加
+   ===================================================== */
+function toggleCsvEditMode(forceValue=null){
+    if(forceValue === null){
+        csvEditMode = !csvEditMode;
+    }else{
+        csvEditMode = forceValue;
+    }
+    document.getElementById("csvEditBtn").classList.toggle("active", csvEditMode);
+    if(csvEditMode){
+        toggleStarMode(false);
+        toggleCircleMode(false);
+        toggleTextMode(false);
+    }
+    /* CSV編集モードON時だけ csvPane をクリック可能にする */
+    map.getPane("csvPane").style.pointerEvents = csvEditMode ? "auto" : "none";
+}
+
+function makeTextIcon(t){
+    return L.divIcon({
+        className: 'free-text-icon',
+        html: `<div class="free-text-inner" style="font-size:${t.size}px;color:${t.color};">${escapeHtml(t.text)}</div>`,
+        iconAnchor: [0, 0]
+    });
+}
+
+function addFreeText(t){
+    const marker = L.marker([t.lat, t.lng], {
+        pane: "textPane",
+        draggable: true,
+        icon: makeTextIcon(t)
+    }).addTo(textLayer);
+
+    textMarkers.set(t, marker);
+
+    /* ドラッグ */
+    let dragFrom = null;
+    marker.on('dragstart', () => { dragFrom = marker.getLatLng(); });
+    marker.on('dragend', e => {
+        const to = e.target.getLatLng(), from = dragFrom;
+        t.lat = to.lat; t.lng = to.lng; saveFreeTexts();
+        pushHistory(`テキスト移動`,
+            () => { t.lat=from.lat; t.lng=from.lng; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setLatLng(from); },
+            () => { t.lat=to.lat;   t.lng=to.lng;   saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setLatLng(to); }
+        );
+    });
+
+    /* 左クリック：編集ダイアログ */
+    marker.on('click', e => {
+        /* Shift → 色変更 */
+        if(e.originalEvent.shiftKey){
+            const prev = t.color, next = currentColor;
+            t.color = next; saveFreeTexts();
+            marker.setIcon(makeTextIcon(t));
+            pushHistory(`テキスト色変更`,
+                () => { t.color=prev; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t)); },
+                () => { t.color=next; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t)); }
+            );
+            return;
+        }
+
+        /* テキスト内容変更 */
+        const choice = prompt(
+            `編集内容を選択\n1: テキスト変更\n2: サイズ変更\n（現在: "${t.text}" / ${t.size}px）`,
+            "1"
+        );
+        if(choice === null) return;
+
+        if(choice === "1"){
+            const newText = prompt("新しいテキスト", t.text);
+            if(newText === null || newText.trim() === "") return;
+            const prev = t.text, next = newText.trim();
+            t.text = next; saveFreeTexts();
+            marker.setIcon(makeTextIcon(t));
+            pushHistory(`テキスト編集`,
+                () => { t.text=prev; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t)); },
+                () => { t.text=next; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t)); }
+            );
+        } else if(choice === "2"){
+            const sizeInput = prompt("フォントサイズ(px)", t.size);
+            const next = parseFontSize(sizeInput);
+            if(next === null){ if(sizeInput !== null) alert("1〜300 の数字で入力してください。"); return; }
+            const prev = t.size;
+            t.size = next; saveFreeTexts();
+            marker.setIcon(makeTextIcon(t));
+            pushHistory(`テキストサイズ変更`,
+                () => { t.size=prev; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t)); },
+                () => { t.size=next; saveFreeTexts(); if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t)); }
+            );
+        }
+    });
+
+    /* 右クリック：削除 */
+    marker.on('contextmenu', e => {
+        e.originalEvent.preventDefault();
+        const i = freeTextData.indexOf(t);
+        if(i !== -1) freeTextData.splice(i, 1);
+        saveFreeTexts();
+        textLayer.removeLayer(marker);
+        textMarkers.delete(t);
+        pushHistory(`テキスト削除`,
+            () => { freeTextData.push(t); saveFreeTexts(); addFreeText(t); },
+            () => {
+                const j = freeTextData.indexOf(t);
+                if(j !== -1) freeTextData.splice(j, 1);
+                saveFreeTexts();
+                if(textMarkers.has(t)){ textLayer.removeLayer(textMarkers.get(t)); textMarkers.delete(t); }
+            }
+        );
+    });
+
+    return marker;
 }
 
 /* =====================================================
@@ -674,20 +740,65 @@ function changeAllLabelSize(){
 /* =====================================================
    ラベル表示切替
    ===================================================== */
-function hideLabels(){
+function toggleLabels(){
     const prev = labelVisible;
-    labelVisible = false; saveLabelVisible(); labelLayer.clearLayers(); labelMarkers = {};
-    pushHistory(`市区町村名表示`,
-        () => { labelVisible=prev; saveLabelVisible(); render(); },
-        () => { labelVisible=false; saveLabelVisible(); labelLayer.clearLayers(); labelMarkers={}; }
+    labelVisible = !labelVisible;
+    saveLabelVisible();
+
+    if(labelVisible){
+        render();
+    }else{
+        labelLayer.clearLayers();
+        labelMarkers = {};
+    }
+
+    document.getElementById("labelToggleBtn").textContent =
+        labelVisible ? "市区町村名非表示" : "市区町村名表示";
+
+    pushHistory(`市区町村表示切替`,
+        () => {
+            labelVisible = prev;
+            saveLabelVisible();
+            if(labelVisible) render();
+            else{ labelLayer.clearLayers(); labelMarkers = {}; }
+            document.getElementById("labelToggleBtn").textContent =
+                labelVisible ? "市区町村名非表示" : "市区町村名表示";
+        },
+        () => {
+            labelVisible = !prev;
+            saveLabelVisible();
+            if(labelVisible) render();
+            else{ labelLayer.clearLayers(); labelMarkers = {}; }
+            document.getElementById("labelToggleBtn").textContent =
+                labelVisible ? "市区町村名非表示" : "市区町村名表示";
+        }
     );
 }
-function showLabels(){
-    const prev = labelVisible;
-    labelVisible = true; saveLabelVisible(); render();
-    pushHistory(`市区町村名非表示`,
-        () => { labelVisible=prev; saveLabelVisible(); render(); },
-        () => { labelVisible=true; saveLabelVisible(); render(); }
+
+/* =====================================================
+   CSV円の一括削除  ★新規追加
+   ===================================================== */
+function clearAllCsvCircles(){
+    if(csvCircleObjects.length === 0){ alert("削除するCSVピンがありません。"); return; }
+    if(!confirm(`CSV読込のピンを全て削除しますか？（${csvCircleObjects.length}件）`)) return;
+
+    const removed = [...csvCircleObjects];
+    removed.forEach(o => {
+        if(leafletCircles.has(o)){
+            csvCircleLayer.removeLayer(leafletCircles.get(o));
+            leafletCircles.delete(o);
+        }
+    });
+    csvCircleObjects = [];
+
+    pushHistory(`CSV一括削除`,
+        () => { removed.forEach(o => { addCsvCircle(o); csvCircleObjects.push(o); }); },
+        () => {
+            removed.forEach(o => {
+                if(leafletCircles.has(o)){ csvCircleLayer.removeLayer(leafletCircles.get(o)); leafletCircles.delete(o); }
+            });
+            csvCircleObjects = [];
+        }
     );
 }
 
@@ -695,24 +806,18 @@ function showLabels(){
    その他
    ===================================================== */
 function downloadMap(){
-
- html2canvas(
-   document.querySelector("#map")
- ).then(canvas=>{
-
-   const a=document.createElement("a");
-   a.download="map.png";
-   a.href=canvas.toDataURL();
-
-   a.click();
-
- });
-
+    html2canvas(document.querySelector("#map")).then(canvas=>{
+        const a = document.createElement("a");
+        a.download = "map.png";
+        a.href = canvas.toDataURL();
+        a.click();
+    });
 }
 function resetAll(){
     if(!confirm("全部リセットしますか？")) return;
-    ["colors","sizes","stars","labels","labelVisible","labelColors"].forEach(k => localStorage.removeItem(k));
-    circleLayer.clearLayers(); location.reload();
+    ["colors","sizes","stars","labels","labelVisible","labelColors","freeTexts"].forEach(k => localStorage.removeItem(k));
+    circleLayer.clearLayers();
+    location.reload();
 }
 function escapeHtml(v){
     return String(v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
@@ -726,46 +831,136 @@ function parseFontSize(value){
     return n;
 }
 
-function toggleLabels(){
-    const prev = labelVisible;
-    labelVisible = !labelVisible;
-    saveLabelVisible();
+/* =====================================================
+   CSV設定
+   ===================================================== */
+function getRadiusByPeople(n){
+    if(n <= 1) return 0.1;
+    if(n <= 2) return 0.2;
+    if(n <= 3) return 0.3;
+    if(n <= 4) return 0.4;
+    if(n <= 5) return 0.5;
+    if(n <= 10) return 0.7;
+    if(n <= 25) return 1.0;
+    if(n <= 50) return 1.2;
+    return 1.5;
+}
 
-    if(labelVisible){
-        render();
-    }else{
-        labelLayer.clearLayers();
-        labelMarkers = {};
-    }
+let FLAG_COLORS = {
+    1: "#ff0000",
+    2: "#0070ff",
+    3: "#00b050",
+    4: "#ff9900",
+    5: "#ffff00"
+};
 
-    // ボタン表示変更
-    document.getElementById("labelToggleBtn").textContent =
-        labelVisible ? "市区町村名非表示" : "市区町村名表示";
+/* =====================================================
+   CSV読み込み
+   ===================================================== */
+function loadCSV(files){
+    if(!files || files.length === 0) return;
+    const reader = new FileReader();
+    reader.onload = e => parseCSV(e.target.result);
+    reader.readAsText(files[0], "UTF-8");
+}
 
-    pushHistory(`市区町村表示切替`,
+function parseCSV(text){
+    const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
+    const dataLines = lines.slice(1);
+    const added = [];
+
+    dataLines.forEach(line => {
+        const cols = line.split(",");
+        if(cols.length < 4) return;
+        const lat = parseFloat(cols[0]);
+        const lng = parseFloat(cols[1]);
+        const people = parseInt(cols[2]);
+        const flag = parseInt(cols[3]);
+        if(!isFinite(lat) || !isFinite(lng)) return;
+
+        const radiusKm = getRadiusByPeople(people);
+        const color = FLAG_COLORS[flag] || "#999";
+        const obj = { lat, lng, radiusKm, color };
+
+        addCsvCircle(obj);
+        added.push(obj);
+        csvCircleObjects.push(obj);  /* ★CSV管理配列に追加 */
+    });
+
+    pushHistory(`CSV読込`,
         () => {
-            labelVisible = prev;
-            saveLabelVisible();
-            if(labelVisible) render();
-            else{
-                labelLayer.clearLayers();
-                labelMarkers = {};
-            }
-            document.getElementById("labelToggleBtn").textContent =
-                labelVisible ? "市区町村名非表示" : "市区町村名表示";
+            added.forEach(o => {
+                if(leafletCircles.has(o)){ csvCircleLayer.removeLayer(leafletCircles.get(o)); leafletCircles.delete(o); }
+                const i = csvCircleObjects.indexOf(o);
+                if(i !== -1) csvCircleObjects.splice(i, 1);
+            });
         },
         () => {
-            labelVisible = !prev;
-            saveLabelVisible();
-            if(labelVisible) render();
-            else{
-                labelLayer.clearLayers();
-                labelMarkers = {};
-            }
-            document.getElementById("labelToggleBtn").textContent =
-                labelVisible ? "市区町村名非表示" : "市区町村名表示";
+            added.forEach(o => { addCsvCircle(o); csvCircleObjects.push(o); });
         }
     );
+}
+
+/* =====================================================
+   円追加（CSV専用）
+   ===================================================== */
+function addCsvCircle(circleObj){
+    const lc = L.circle([circleObj.lat, circleObj.lng], {
+        pane: "csvPane",
+        radius: circleObj.radiusKm * 1000,
+        color: circleObj.color,
+        fillColor: circleObj.color,
+        fillOpacity: 0.7,
+        weight: 2,
+        interactive: true,
+    }).addTo(csvCircleLayer);
+
+    leafletCircles.set(circleObj, lc);
+
+    lc.on('click', function(ev){
+        if(ev.originalEvent && ev.originalEvent.shiftKey){
+            const prev = circleObj.color, next = currentColor;
+            circleObj.color = next;
+            this.setStyle({ color: next, fillColor: next });
+            pushHistory(`円色変更`,
+                () => { circleObj.color=prev; if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setStyle({color:prev,fillColor:prev}); },
+                () => { circleObj.color=next; if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setStyle({color:next,fillColor:next}); }
+            );
+            return;
+        }
+        const input = prompt("半径（km）", circleObj.radiusKm);
+        if(input === null) return;
+        const val = Number(input);
+        if(!isFinite(val) || val <= 0) return;
+        const prev = circleObj.radiusKm;
+        circleObj.radiusKm = val;
+        this.setRadius(val * 1000);
+        pushHistory(`円半径変更`,
+            () => { circleObj.radiusKm=prev; if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setRadius(prev*1000); },
+            () => { circleObj.radiusKm=val;  if(leafletCircles.has(circleObj)) leafletCircles.get(circleObj).setRadius(val*1000); }
+        );
+    });
+
+    /* 右クリック：個別削除 */
+    lc.on('contextmenu', function(ev){
+        ev.originalEvent.preventDefault();
+        csvCircleLayer.removeLayer(lc);
+        leafletCircles.delete(circleObj);
+
+        const idx = csvCircleObjects.indexOf(circleObj);
+        if(idx !== -1) csvCircleObjects.splice(idx, 1);
+
+        pushHistory(`CSVピン削除`,
+            () => { addCsvCircle(circleObj); csvCircleObjects.push(circleObj); },
+            () => {
+                const j = csvCircleObjects.indexOf(circleObj);
+                if(j !== -1) csvCircleObjects.splice(j, 1);
+                if(leafletCircles.has(circleObj)){ csvCircleLayer.removeLayer(leafletCircles.get(circleObj)); leafletCircles.delete(circleObj); }
+            }
+        );
+    });
+
+    return lc;
 }
 
 /* =====================================================
@@ -778,183 +973,9 @@ setTimeout(() => {
         labelVisible ? "市区町村名非表示" : "市区町村名表示";
 }, 100);
 starData.forEach(s => addStar(s));
+freeTextData.forEach(t => addFreeText(t));  /* ★保存済みテキストを復元 */
 
 toggleCircleMode(false);
 toggleStarMode(false);
-
-/* =========================
-   CSV設定
-   ========================= */
-
-// 人数 → 半径（km）
-function getRadiusByPeople(n){
-    if(n <= 4) return 0.1;
-    if(n <= 9) return 0.3;
-    if(n <= 24) return 0.5;
-    if(n <= 49) return 0.7;
-    return 1.0;
-}
-
-// フラグ → 色
-let FLAG_COLORS = {
-    1: "#ff0000",
-    2: "#0070ff",
-    3: "#00b050"
-};
-
-
-/* =========================
-   CSV読み込み
-   ========================= */
-function loadCSV(files){
-    if(!files || files.length === 0) return;
-
-    const reader = new FileReader();
-    reader.onload = e => parseCSV(e.target.result);
-    reader.readAsText(files[0], "UTF-8");
-}
-
-
-/* =========================
-   CSV解析
-   ========================= */
-function parseCSV(text){
-    const lines = text.split(/\r?\n/).filter(l => l.trim() !== "");
-    const dataLines = lines.slice(1);
-
-    const added = [];
-
-    dataLines.forEach(line => {
-        const cols = line.split(",");
-        if(cols.length < 4) return;
-
-        const lat = parseFloat(cols[0]);
-        const lng = parseFloat(cols[1]);
-        const people = parseInt(cols[2]);
-        const flag = parseInt(cols[3]);
-
-        if(!isFinite(lat) || !isFinite(lng)) return;
-
-        const radiusKm = getRadiusByPeople(people);
-        const color = FLAG_COLORS[flag] || "#999";
-
-        const obj = {
-            lat: lat,
-            lng: lng,
-            radiusKm: radiusKm,
-            color: color
-        };
-
-        addCsvCircle(obj);
-        added.push(obj);
-    });
-
-    // Undo対応
-    pushHistory(`CSV読込`,
-        () => {
-            added.forEach(o => {
-                if(leafletCircles.has(o)){
-                    circleLayer.removeLayer(leafletCircles.get(o));
-                    leafletCircles.delete(o);
-                }
-            });
-        },
-        () => {
-            added.forEach(o => addCsvCircle(o));
-        }
-    );
-}
-
-
-/* =========================
-   円追加（CSV専用）
-   ========================= */
-function addCsvCircle(circleObj){
-    const lc = L.circle([circleObj.lat, circleObj.lng], {
-        pane: "circlePane",
-        radius: circleObj.radiusKm * 1000,
-        color: circleObj.color,
-        fillColor: circleObj.color,
-        fillOpacity: 0.7,
-        weight: 2,
-        interactive: circleMode,
-    }).addTo(circleLayer);
-
-    leafletCircles.set(circleObj, lc);
-
-    // クリック
-    lc.on('click', function(ev){
-
-        // Shiftで色変更
-        if(ev.originalEvent && ev.originalEvent.shiftKey){
-            const prev = circleObj.color;
-            const next = currentColor;
-
-            circleObj.color = next;
-            this.setStyle({ color: next, fillColor: next });
-
-            pushHistory(`円色変更`,
-                () => {
-                    circleObj.color = prev;
-                    if(leafletCircles.has(circleObj)){
-                        leafletCircles.get(circleObj).setStyle({color:prev, fillColor:prev});
-                    }
-                },
-                () => {
-                    circleObj.color = next;
-                    if(leafletCircles.has(circleObj)){
-                        leafletCircles.get(circleObj).setStyle({color:next, fillColor:next});
-                    }
-                }
-            );
-            return;
-        }
-
-        // 半径変更
-        const input = prompt("半径（km）", circleObj.radiusKm);
-        if(input === null) return;
-
-        const val = Number(input);
-        if(!isFinite(val) || val <= 0) return;
-
-        const prev = circleObj.radiusKm;
-        circleObj.radiusKm = val;
-
-        this.setRadius(val * 1000);
-
-        pushHistory(`円半径変更`,
-            () => {
-                circleObj.radiusKm = prev;
-                if(leafletCircles.has(circleObj)){
-                    leafletCircles.get(circleObj).setRadius(prev * 1000);
-                }
-            },
-            () => {
-                circleObj.radiusKm = val;
-                if(leafletCircles.has(circleObj)){
-                    leafletCircles.get(circleObj).setRadius(val * 1000);
-                }
-            }
-        );
-    });
-
-    // 右クリック削除
-    lc.on('contextmenu', function(ev){
-        ev.originalEvent.preventDefault();
-
-        circleLayer.removeLayer(lc);
-        leafletCircles.delete(circleObj);
-
-        pushHistory(`円削除`,
-            () => addCsvCircle(circleObj),
-            () => {
-                if(leafletCircles.has(circleObj)){
-                    circleLayer.removeLayer(leafletCircles.get(circleObj));
-                    leafletCircles.delete(circleObj);
-                }
-            }
-        );
-    });
-
-    return lc;
-}
+toggleTextMode(false);
+toggleCsvEditMode(false);
