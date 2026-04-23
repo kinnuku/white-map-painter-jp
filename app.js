@@ -58,18 +58,22 @@ const map = L.map('map',{
 }).setView([37.5,137],5);
 
 map.createPane("polygonPane");
-map.createPane("circlePane");   /* 星に紐づく円（circleMode時のみ操作可） */
-map.createPane("csvPane");      /* CSV円専用（常時操作可） */
+map.createPane("circlePane");
+map.createPane("csvPane");
+map.createPane("ellipsePane");       /* ★楕円用ペーン */
+map.createPane("ellipseHandlePane"); /* ★楕円ハンドル用ペーン */
 map.createPane("starPane");
 map.createPane("labelPane");
 map.createPane("textPane");
 
-map.getPane("polygonPane").style.zIndex = 300;
-map.getPane("circlePane").style.zIndex  = 450;
-map.getPane("csvPane").style.zIndex     = 460;  /* circlePane より前面 */
-map.getPane("starPane").style.zIndex    = 500;
-map.getPane("labelPane").style.zIndex   = 550;
-map.getPane("textPane").style.zIndex    = 600;
+map.getPane("polygonPane").style.zIndex      = 300;
+map.getPane("circlePane").style.zIndex       = 450;
+map.getPane("csvPane").style.zIndex          = 460;
+map.getPane("ellipsePane").style.zIndex      = 480; /* ★ circlePane〜starPane の間 */
+map.getPane("ellipseHandlePane").style.zIndex= 510; /* ★ starPane のすぐ上 */
+map.getPane("starPane").style.zIndex         = 500;
+map.getPane("labelPane").style.zIndex        = 550;
+map.getPane("textPane").style.zIndex         = 600;
 
 /* csvPane は CSV編集モード時のみ操作可 */
 map.getPane("csvPane").style.pointerEvents = "none";
@@ -78,7 +82,7 @@ let layerGroup     = L.layerGroup().addTo(map);
 let labelLayer     = L.layerGroup().addTo(map);
 let starLayer      = L.layerGroup().addTo(map);
 let circleLayer    = L.layerGroup().addTo(map);
-let csvCircleLayer = L.layerGroup().addTo(map);  /* CSV円専用レイヤー */
+let csvCircleLayer = L.layerGroup().addTo(map);
 let textLayer      = L.layerGroup().addTo(map);
 
 let currentColor = "#e60000";
@@ -90,8 +94,7 @@ let labelPos       = JSON.parse(localStorage.getItem("labels")       || "{}");
 let labelVisible   = JSON.parse(localStorage.getItem("labelVisible") ?? "true");
 let labelColorData = JSON.parse(localStorage.getItem("labelColors")  || "{}");
 
-/* ★フリーテキストデータ */
-let freeTextData   = JSON.parse(localStorage.getItem("freeTexts")   || "[]");
+let freeTextData   = JSON.parse(localStorage.getItem("freeTexts")    || "[]");
 const saveFreeTexts = () => localStorage.setItem("freeTexts", JSON.stringify(freeTextData));
 
 let geoCache     = {};
@@ -100,17 +103,22 @@ let used         = new Set();
 let starMode     = false;
 let circleMode   = false;
 let textMode     = false;
-let csvEditMode  = false;  /* CSV円編集モード */
+let csvEditMode  = false;
+let ellipseMode  = false; /* ★ */
 
-/* Leafletオブジェクト参照 */
-let labelMarkers   = {};          /* key -> L.marker */
-let starMarkers    = new Map();   /* starObj -> L.marker */
-let leafletCircles = new Map();   /* circleObj -> L.circle */
-let textMarkers    = new Map();   /* textObj -> L.marker */
-let polygonLayer = L.layerGroup().addTo(map);
+let labelMarkers   = {};
+let starMarkers    = new Map();
+let leafletCircles = new Map();
+let textMarkers    = new Map();
+let polygonLayer   = L.layerGroup().addTo(map);
 
-/* CSVで追加した円を別途管理 */
-let csvCircleObjects = [];        /* ★CSV円オブジェクト配列 */
+let csvCircleObjects = [];
+
+/* ★ 楕円データ */
+let ellipseData      = JSON.parse(localStorage.getItem("ellipses") || "[]");
+const saveEllipses   = () => localStorage.setItem("ellipses", JSON.stringify(ellipseData));
+const ellipseMarkers = new Map(); /* ellipseObj -> { poly, handleLayer } */
+let selectedEllipse  = null;
 
 /* =====================================================
    保存ユーティリティ
@@ -213,7 +221,9 @@ async function render(){
                 pane: "polygonPane",
                 style: f => ({
                     color:"#000", weight:1,
-                    fillColor: colorData[f.properties.N03_007] || "#fff",
+                    fillColor: colorData[f.properties.N03_007]
+                        || f.properties.color
+                        || "#fff",
                     fillOpacity:1
                 }),
                 onEachFeature: (f, layer) => {
@@ -224,7 +234,7 @@ async function render(){
                     renderedKeys.add(key);
 
                     layer.on('click', () => {
-                        if (starMode || circleMode || textMode) return;
+                        if (starMode || circleMode || textMode || ellipseMode) return;
                         const prev = colorData[key] || null;
                         const next = currentColor;
                         if(prev === next) return;
@@ -334,7 +344,6 @@ function addLabelMarker(key, safeName, center){
 /* =====================================================
    星
    ===================================================== */
-
 function toggleStarMode(forceValue=null){
     if(forceValue === null){
         starMode = !starMode;
@@ -346,9 +355,10 @@ function toggleStarMode(forceValue=null){
         toggleCircleMode(false);
         toggleTextMode(false);
         toggleCsvEditMode(false);
+        toggleEllipseMode(false); /* ★ */
     }
-    const pane = map.getPane("starPane");
-    pane.style.pointerEvents = starMode ? "auto" : "none";
+    /* starPane は常にクリック可能（円モードでも星をクリックして円を追加するため） */
+    map.getPane("starPane").style.pointerEvents = "auto";
 }
 
 function setCircleInteractive(flag){
@@ -365,9 +375,8 @@ function setCircleInteractive(flag){
 }
 
 /* =====================================================
-   円
+   円モード
    ===================================================== */
-
 function toggleCircleMode(forceValue=null){
     if(forceValue === null){
         circleMode = !circleMode;
@@ -380,6 +389,7 @@ function toggleCircleMode(forceValue=null){
         document.getElementById("starBtn").classList.remove("active");
         toggleTextMode(false);
         toggleCsvEditMode(false);
+        toggleEllipseMode(false); /* ★ */
     }
     const pane = map.getPane("circlePane");
     pane.style.pointerEvents = circleMode ? "auto" : "none";
@@ -393,8 +403,11 @@ function makeStarIcon(s){
     });
 }
 
+/* =====================================================
+   地図クリックハンドラ（星・テキスト・楕円）
+   ===================================================== */
 map.on('click', e => {
-    /* ★フリーテキストモード */
+    /* フリーテキストモード */
     if(textMode){
         const inputText = prompt("テキストを入力してください", "テキスト");
         if(inputText === null || inputText.trim() === "") return;
@@ -426,6 +439,43 @@ map.on('click', e => {
         return;
     }
 
+    /* 楕円モード */
+    if(ellipseMode){
+        /* 楕円・ハンドル上のクリックは stopPropagation するのでここには来ない */
+        /* 選択中のハンドルを解除 */
+        if(selectedEllipse){
+            deselectEllipse();
+            return;
+        }
+        /* 新規追加 */
+        const obj = {
+            lat:     e.latlng.lat,
+            lng:     e.latlng.lng,
+            rxKm:    30,
+            ryKm:    15,
+            rot:     0,
+            color:   currentColor,
+            opacity: 0.3
+        };
+        ellipseData.push(obj);
+        saveEllipses();
+        addEllipse(obj);
+        selectEllipse(obj);
+
+        pushHistory("楕円追加",
+            () => {
+                deselectEllipse();
+                const i = ellipseData.indexOf(obj);
+                if(i !== -1) ellipseData.splice(i, 1);
+                saveEllipses();
+                removeEllipseLayer(obj);
+            },
+            () => { ellipseData.push(obj); saveEllipses(); addEllipse(obj); }
+        );
+        return;
+    }
+
+    /* 星モード */
     if(!starMode) return;
     const input = prompt("星サイズ(px)", 20);
     const sz = parseFontSize(input);
@@ -529,7 +579,7 @@ function addCircle(s, circleObj){
         fillColor: circleObj.color,
         fillOpacity: 0.2,
         weight: 2,
-        interactive: circleMode,
+        interactive: true,
     }).addTo(circleLayer);
 
     leafletCircles.set(circleObj, lc);
@@ -584,9 +634,8 @@ function addCircle(s, circleObj){
 }
 
 /* =====================================================
-   フリーテキスト機能  ★新規追加
+   フリーテキスト
    ===================================================== */
-
 function toggleTextMode(forceValue=null){
     if(forceValue === null){
         textMode = !textMode;
@@ -598,12 +647,13 @@ function toggleTextMode(forceValue=null){
         toggleStarMode(false);
         toggleCircleMode(false);
         toggleCsvEditMode(false);
+        toggleEllipseMode(false); /* ★ */
     }
     map.getPane("textPane").style.pointerEvents = "auto";
 }
 
 /* =====================================================
-   CSV編集モード  ★新規追加
+   CSV編集モード
    ===================================================== */
 function toggleCsvEditMode(forceValue=null){
     if(forceValue === null){
@@ -616,8 +666,8 @@ function toggleCsvEditMode(forceValue=null){
         toggleStarMode(false);
         toggleCircleMode(false);
         toggleTextMode(false);
+        toggleEllipseMode(false); /* ★ */
     }
-    /* CSV編集モードON時だけ csvPane をクリック可能にする */
     map.getPane("csvPane").style.pointerEvents = csvEditMode ? "auto" : "none";
 }
 
@@ -638,7 +688,6 @@ function addFreeText(t){
 
     textMarkers.set(t, marker);
 
-    /* ドラッグ */
     let dragFrom = null;
     marker.on('dragstart', () => { dragFrom = marker.getLatLng(); });
     marker.on('dragend', e => {
@@ -650,9 +699,7 @@ function addFreeText(t){
         );
     });
 
-    /* 左クリック：編集ダイアログ */
     marker.on('click', e => {
-        /* Shift → 色変更 */
         if(e.originalEvent.shiftKey){
             const prev = t.color, next = currentColor;
             t.color = next; saveFreeTexts();
@@ -664,7 +711,6 @@ function addFreeText(t){
             return;
         }
 
-        /* テキスト内容変更 */
         const choice = prompt(
             `編集内容を選択\n1: テキスト変更\n2: サイズ変更\n（現在: "${t.text}" / ${t.size}px）`,
             "1"
@@ -695,7 +741,6 @@ function addFreeText(t){
         }
     });
 
-    /* 右クリック：削除 */
     marker.on('contextmenu', e => {
         e.originalEvent.preventDefault();
         const i = freeTextData.indexOf(t);
@@ -776,7 +821,7 @@ function toggleLabels(){
 }
 
 /* =====================================================
-   CSV円の一括削除  ★新規追加
+   CSV円の一括削除
    ===================================================== */
 function clearAllCsvCircles(){
     if(csvCircleObjects.length === 0){ alert("削除するCSVピンがありません。"); return; }
@@ -803,7 +848,7 @@ function clearAllCsvCircles(){
 }
 
 /* =====================================================
-   その他
+   その他ユーティリティ
    ===================================================== */
 function downloadMap(){
     html2canvas(document.querySelector("#map")).then(canvas=>{
@@ -815,7 +860,7 @@ function downloadMap(){
 }
 function resetAll(){
     if(!confirm("全部リセットしますか？")) return;
-    ["colors","sizes","stars","labels","labelVisible","labelColors","freeTexts"].forEach(k => localStorage.removeItem(k));
+    ["colors","sizes","stars","labels","labelVisible","labelColors","freeTexts","ellipses"].forEach(k => localStorage.removeItem(k));
     circleLayer.clearLayers();
     location.reload();
 }
@@ -884,7 +929,7 @@ function parseCSV(text){
 
         addCsvCircle(obj);
         added.push(obj);
-        csvCircleObjects.push(obj);  /* ★CSV管理配列に追加 */
+        csvCircleObjects.push(obj);
     });
 
     pushHistory(`CSV読込`,
@@ -902,7 +947,7 @@ function parseCSV(text){
 }
 
 /* =====================================================
-   円追加（CSV専用）
+   CSV円追加
    ===================================================== */
 function addCsvCircle(circleObj){
     const lc = L.circle([circleObj.lat, circleObj.lng], {
@@ -941,7 +986,6 @@ function addCsvCircle(circleObj){
         );
     });
 
-    /* 右クリック：個別削除 */
     lc.on('contextmenu', function(ev){
         ev.originalEvent.preventDefault();
         csvCircleLayer.removeLayer(lc);
@@ -964,6 +1008,346 @@ function addCsvCircle(circleObj){
 }
 
 /* =====================================================
+   ★ 楕円機能
+   =====================================================
+
+   ハンドル構成（楕円モード中に楕円をクリックで出現）:
+     ●  長軸端 2点 … ドラッグで長軸を伸縮
+     ●  短軸端 2点 … ドラッグで短軸を伸縮
+     ↻  回転ハンドル (長軸端の外側) … ドラッグで回転
+     ✛  中心ハンドル … ドラッグで移動
+
+   操作:
+     楕円モード中 地図クリック → 楕円新規追加（長軸30km・短軸15km）
+     楕円クリック              → ハンドル表示
+     ハンドルドラッグ          → リアルタイム変形 / 移動 / 回転
+     Shift + 楕円クリック      → 色変更（選択中の色）
+     右クリック                → 削除
+     ハンドル外クリック        → ハンドル解除
+   ===================================================== */
+
+const EARTH_R = 6371; // km
+
+/* ----- モード切替 ----- */
+function toggleEllipseMode(forceValue = null){
+    ellipseMode = forceValue !== null ? forceValue : !ellipseMode;
+    const btn = document.getElementById("ellipseBtn");
+    if(btn) btn.classList.toggle("active", ellipseMode);
+    if(ellipseMode){
+        toggleStarMode(false);
+        toggleCircleMode(false);
+        toggleTextMode(false);
+        toggleCsvEditMode(false);
+    } else {
+        deselectEllipse();
+    }
+}
+
+/* ----- ハンドル解除 ----- */
+function deselectEllipse(){
+    if(!selectedEllipse) return;
+    const rec = ellipseMarkers.get(selectedEllipse);
+    if(rec) rec.handleLayer.clearLayers();
+    selectedEllipse = null;
+}
+
+/* ----- 楕円の点列計算 ----- */
+function ellipseLatLngs(lat, lng, rxKm, ryKm, rotDeg, N = 360){
+    const rotRad = (rotDeg * Math.PI) / 180;
+    const latRad = (lat    * Math.PI) / 180;
+    const pts    = [];
+    for(let i = 0; i < N; i++){
+        const theta  = (2 * Math.PI * i) / N;
+        const xLocal =  rxKm * Math.cos(theta);
+        const yLocal =  ryKm * Math.sin(theta);
+        const xRot   =  xLocal * Math.cos(rotRad) - yLocal * Math.sin(rotRad);
+        const yRot   =  xLocal * Math.sin(rotRad) + yLocal * Math.cos(rotRad);
+        const dLat   = (yRot / EARTH_R) * (180 / Math.PI);
+        const dLng   = (xRot / EARTH_R) * (180 / Math.PI) / Math.cos(latRad);
+        pts.push([lat + dLat, lng + dLng]);
+    }
+    return pts;
+}
+
+/* 楕円上の1点（theta は局所座標系）→ LatLng */
+function ellipsePoint(lat, lng, rxKm, ryKm, rotDeg, theta){
+    const rotRad = (rotDeg * Math.PI) / 180;
+    const latRad = (lat    * Math.PI) / 180;
+    const xLocal =  rxKm  * Math.cos(theta);
+    const yLocal =  ryKm  * Math.sin(theta);
+    const xRot   =  xLocal * Math.cos(rotRad) - yLocal * Math.sin(rotRad);
+    const yRot   =  xLocal * Math.sin(rotRad) + yLocal * Math.cos(rotRad);
+    const dLat   = (yRot / EARTH_R) * (180 / Math.PI);
+    const dLng   = (xRot / EARTH_R) * (180 / Math.PI) / Math.cos(latRad);
+    return L.latLng(lat + dLat, lng + dLng);
+}
+
+/* ----- 楕円レイヤー追加 ----- */
+function addEllipse(obj){
+    const poly = L.polygon(ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot), {
+        pane:        "ellipsePane",
+        color:       obj.color,
+        fillColor:   obj.color,
+        fillOpacity: obj.opacity !== undefined ? obj.opacity : 0.3,
+        weight:      2,
+        interactive: true
+    }).addTo(map);
+
+    const handleLayer = L.layerGroup().addTo(map);
+    ellipseMarkers.set(obj, { poly, handleLayer });
+
+    poly.on('click', function(e){
+        L.DomEvent.stopPropagation(e);
+        if(!ellipseMode) return;
+
+        /* Shift → 色変更 */
+        if(e.originalEvent.shiftKey){
+            const prev = obj.color, next = currentColor;
+            obj.color = next; saveEllipses();
+            poly.setStyle({ color: next, fillColor: next });
+            pushHistory("楕円色変更",
+                () => { obj.color = prev; saveEllipses(); poly.setStyle({ color: prev, fillColor: prev }); },
+                () => { obj.color = next; saveEllipses(); poly.setStyle({ color: next, fillColor: next }); }
+            );
+            return;
+        }
+
+        /* ハンドル表示 / 解除 */
+        if(selectedEllipse === obj){
+            deselectEllipse();
+        } else {
+            deselectEllipse();
+            selectEllipse(obj);
+        }
+    });
+
+    poly.on('contextmenu', function(e){
+        e.originalEvent.preventDefault();
+        L.DomEvent.stopPropagation(e);
+        if(!ellipseMode) return;
+        deselectEllipse();
+        const i = ellipseData.indexOf(obj);
+        if(i !== -1) ellipseData.splice(i, 1);
+        saveEllipses();
+        removeEllipseLayer(obj);
+        pushHistory("楕円削除",
+            () => { ellipseData.push(obj); saveEllipses(); addEllipse(obj); },
+            () => {
+                const j = ellipseData.indexOf(obj);
+                if(j !== -1) ellipseData.splice(j, 1);
+                saveEllipses(); removeEllipseLayer(obj);
+            }
+        );
+    });
+
+    return poly;
+}
+
+/* ----- ハンドル表示 ----- */
+function selectEllipse(obj){
+    selectedEllipse = obj;
+    const rec = ellipseMarkers.get(obj);
+    if(!rec) return;
+    _buildHandles(obj, rec);
+}
+
+/* ---- ハンドルアイコン ---- */
+function _axisHandleIcon(){
+    return L.divIcon({
+        className: "",
+        html: `<div style="
+            width:14px;height:14px;background:#fff;
+            border:2px solid #333;border-radius:50%;
+            cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,.5);
+        "></div>`,
+        iconSize: [14,14], iconAnchor: [7,7]
+    });
+}
+function _rotHandleIcon(){
+    return L.divIcon({
+        className: "",
+        html: `<div style="
+            width:16px;height:16px;background:#ffd700;
+            border:2px solid #888;border-radius:50%;
+            cursor:crosshair;box-shadow:0 1px 4px rgba(0,0,0,.5);
+            display:flex;align-items:center;justify-content:center;font-size:11px;
+        ">↻</div>`,
+        iconSize: [16,16], iconAnchor: [8,8]
+    });
+}
+function _moveHandleIcon(){
+    return L.divIcon({
+        className: "",
+        html: `<div style="
+            width:16px;height:16px;background:#4af;
+            border:2px solid #055;border-radius:3px;
+            cursor:move;box-shadow:0 1px 4px rgba(0,0,0,.5);
+            display:flex;align-items:center;justify-content:center;font-size:11px;
+        ">✛</div>`,
+        iconSize: [16,16], iconAnchor: [8,8]
+    });
+}
+
+/* ---- ハンドル構築 ---- */
+function _buildHandles(obj, rec){
+    rec.handleLayer.clearLayers();
+
+    /* 軸ハンドル 4点 */
+    [
+        { key: "rx+", theta: 0 },
+        { key: "rx-", theta: Math.PI },
+        { key: "ry+", theta: Math.PI / 2 },
+        { key: "ry-", theta: 3 * Math.PI / 2 }
+    ].forEach(({ key, theta }) => {
+        const m = L.marker(ellipsePoint(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot, theta), {
+            pane: "ellipseHandlePane",
+            icon: _axisHandleIcon(),
+            draggable: true,
+            zIndexOffset: 1000
+        }).addTo(rec.handleLayer);
+        m._ellipseHandleKey = key;
+
+        let snap = null;
+        m.on('dragstart', () => { snap = { rxKm: obj.rxKm, ryKm: obj.ryKm }; map.dragging.disable(); });
+        m.on('drag', function(e){
+            _applyAxisHandle(obj, key, e.target.getLatLng());
+            ellipseMarkers.get(obj).poly.setLatLngs(
+                ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot));
+            _updateHandlePositions(obj, rec);
+        });
+        m.on('dragend', function(){
+            map.dragging.enable();
+            saveEllipses();
+            const after = { rxKm: obj.rxKm, ryKm: obj.ryKm }, before = snap;
+            pushHistory("楕円変形",
+                () => { Object.assign(obj, before); saveEllipses(); _refreshEllipse(obj); },
+                () => { Object.assign(obj, after);  saveEllipses(); _refreshEllipse(obj); }
+            );
+        });
+        m.on('click', e => L.DomEvent.stopPropagation(e));
+    });
+
+    /* 回転ハンドル */
+    const ROT_EXTRA = Math.max(obj.rxKm * 0.4, 5);
+    const rotM = L.marker(
+        ellipsePoint(obj.lat, obj.lng, obj.rxKm + ROT_EXTRA, 0, obj.rot, 0),
+        { pane: "ellipseHandlePane", icon: _rotHandleIcon(), draggable: true, zIndexOffset: 1000 }
+    ).addTo(rec.handleLayer);
+    rotM._ellipseHandleKey = "rot";
+
+    let rotSnap = null;
+    rotM.on('dragstart', () => { rotSnap = obj.rot; map.dragging.disable(); });
+    rotM.on('drag', function(e){
+        const cPx = map.latLngToContainerPoint(L.latLng(obj.lat, obj.lng));
+        const hPx = map.latLngToContainerPoint(e.target.getLatLng());
+        const dx  =  hPx.x - cPx.x;
+        const dy  = -(hPx.y - cPx.y);
+        obj.rot   = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+        ellipseMarkers.get(obj).poly.setLatLngs(
+            ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot));
+        _updateHandlePositions(obj, rec);
+    });
+    rotM.on('dragend', function(){
+        map.dragging.enable();
+        saveEllipses();
+        const after = obj.rot, before = rotSnap;
+        pushHistory("楕円回転",
+            () => { obj.rot = before; saveEllipses(); _refreshEllipse(obj); },
+            () => { obj.rot = after;  saveEllipses(); _refreshEllipse(obj); }
+        );
+    });
+    rotM.on('click', e => L.DomEvent.stopPropagation(e));
+
+    /* 中心（移動）ハンドル */
+    const cM = L.marker([obj.lat, obj.lng], {
+        pane: "ellipseHandlePane",
+        icon: _moveHandleIcon(),
+        draggable: true,
+        zIndexOffset: 1000
+    }).addTo(rec.handleLayer);
+    cM._ellipseHandleKey = "move";
+
+    let moveSnap = null;
+    cM.on('dragstart', () => { moveSnap = { lat: obj.lat, lng: obj.lng }; map.dragging.disable(); });
+    cM.on('drag', function(e){
+        const ll = e.target.getLatLng();
+        obj.lat  = ll.lat; obj.lng = ll.lng;
+        ellipseMarkers.get(obj).poly.setLatLngs(
+            ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot));
+        _updateHandlePositions(obj, rec);
+    });
+    cM.on('dragend', function(){
+        map.dragging.enable();
+        saveEllipses();
+        const after = { lat: obj.lat, lng: obj.lng }, before = moveSnap;
+        pushHistory("楕円移動",
+            () => { obj.lat = before.lat; obj.lng = before.lng; saveEllipses(); _refreshEllipse(obj); },
+            () => { obj.lat = after.lat;  obj.lng = after.lng;  saveEllipses(); _refreshEllipse(obj); }
+        );
+    });
+    cM.on('click', e => L.DomEvent.stopPropagation(e));
+}
+
+/* ----- 軸ハンドル → rxKm / ryKm 更新 ----- */
+function _applyAxisHandle(obj, key, dragLL){
+    const latRad = (obj.lat * Math.PI) / 180;
+    const dLat   = dragLL.lat - obj.lat;
+    const dLng   = dragLL.lng - obj.lng;
+    const dy     =  dLat * (Math.PI / 180) * EARTH_R;
+    const dx     =  dLng * (Math.PI / 180) * EARTH_R * Math.cos(latRad);
+    const rotRad = (obj.rot * Math.PI) / 180;
+    const xLocal =  dx * Math.cos(rotRad) + dy * Math.sin(rotRad);
+    const yLocal = -dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
+
+    if     (key === "rx+") obj.rxKm = Math.max(0.5, xLocal);
+    else if(key === "rx-") obj.rxKm = Math.max(0.5, -xLocal);
+    else if(key === "ry+") obj.ryKm = Math.max(0.5, yLocal);
+    else if(key === "ry-") obj.ryKm = Math.max(0.5, -yLocal);
+}
+
+/* ----- ハンドル位置だけ更新 ----- */
+function _updateHandlePositions(obj, rec){
+    if(!rec) return;
+    const thetaMap = { "rx+": 0, "rx-": Math.PI, "ry+": Math.PI/2, "ry-": 3*Math.PI/2 };
+    const ROT_EXTRA = Math.max(obj.rxKm * 0.4, 5);
+    rec.handleLayer.eachLayer(m => {
+        const k = m._ellipseHandleKey;
+        if(!k) return;
+        if(k in thetaMap){
+            m.setLatLng(ellipsePoint(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot, thetaMap[k]));
+        } else if(k === "rot"){
+            m.setLatLng(ellipsePoint(obj.lat, obj.lng, obj.rxKm + ROT_EXTRA, 0, obj.rot, 0));
+        } else if(k === "move"){
+            m.setLatLng(L.latLng(obj.lat, obj.lng));
+        }
+    });
+}
+
+/* ----- 楕円を全体再描画（undo/redo後など） ----- */
+function _refreshEllipse(obj){
+    const rec = ellipseMarkers.get(obj);
+    if(!rec) return;
+    rec.poly.setLatLngs(ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot));
+    rec.poly.setStyle({ color: obj.color, fillColor: obj.color, fillOpacity: obj.opacity || 0.3 });
+    if(selectedEllipse === obj){
+        _buildHandles(obj, rec);
+    } else {
+        rec.handleLayer.clearLayers();
+    }
+}
+
+/* ----- 楕円レイヤー削除 ----- */
+function removeEllipseLayer(obj){
+    const rec = ellipseMarkers.get(obj);
+    if(!rec) return;
+    map.removeLayer(rec.poly);
+    rec.handleLayer.clearLayers();
+    map.removeLayer(rec.handleLayer);
+    ellipseMarkers.delete(obj);
+    if(selectedEllipse === obj) selectedEllipse = null;
+}
+
+/* =====================================================
    起動
    ===================================================== */
 createPrefUI({ features: PREF_ORDER.map(p => ({ properties:{ N03_001:p } })) });
@@ -973,9 +1357,11 @@ setTimeout(() => {
         labelVisible ? "市区町村名非表示" : "市区町村名表示";
 }, 100);
 starData.forEach(s => addStar(s));
-freeTextData.forEach(t => addFreeText(t));  /* ★保存済みテキストを復元 */
+freeTextData.forEach(t => addFreeText(t));
+ellipseData.forEach(obj => addEllipse(obj)); /* ★ 保存済み楕円を復元 */
 
 toggleCircleMode(false);
 toggleStarMode(false);
 toggleTextMode(false);
 toggleCsvEditMode(false);
+toggleEllipseMode(false); /* ★ */
