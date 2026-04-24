@@ -1090,7 +1090,7 @@ function addEllipse(obj){
         color:       obj.color,
         fillColor:   obj.fillColor || obj.color,
         fillOpacity: obj.opacity   !== undefined ? obj.opacity : 0,
-        weight:      2,
+        weight:      4,
         interactive: true
     }).addTo(map);
 
