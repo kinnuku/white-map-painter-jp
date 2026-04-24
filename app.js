@@ -449,13 +449,14 @@ map.on('click', e => {
         }
         /* 新規追加 */
         const obj = {
-            lat:     e.latlng.lat,
-            lng:     e.latlng.lng,
-            rxKm:    30,
-            ryKm:    15,
-            rot:     0,
-            color:   currentColor,
-            opacity: 0.3
+            lat:       e.latlng.lat,
+            lng:       e.latlng.lng,
+            rxKm:      30,
+            ryKm:      15,
+            rot:       0,
+            color:     currentColor,  /* 枠線色 */
+            fillColor: null,          /* 塗り色（null=透明） */
+            opacity:   0              /* 塗り透明度 */
         };
         ellipseData.push(obj);
         saveEllipses();
@@ -1087,8 +1088,8 @@ function addEllipse(obj){
     const poly = L.polygon(ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot), {
         pane:        "ellipsePane",
         color:       obj.color,
-        fillColor:   obj.color,
-        fillOpacity: obj.opacity !== undefined ? obj.opacity : 0.3,
+        fillColor:   obj.fillColor || obj.color,
+        fillOpacity: obj.opacity   !== undefined ? obj.opacity : 0,
         weight:      2,
         interactive: true
     }).addTo(map);
@@ -1100,14 +1101,27 @@ function addEllipse(obj){
         L.DomEvent.stopPropagation(e);
         if(!ellipseMode) return;
 
-        /* Shift → 色変更 */
+        /* Ctrl+Shift+クリック → 塗り色変更 */
+        if(e.originalEvent.shiftKey && e.originalEvent.ctrlKey){
+            const prev = obj.fillColor, prevOp = obj.opacity;
+            const next = currentColor, nextOp = 0.3;
+            obj.fillColor = next; obj.opacity = nextOp; saveEllipses();
+            poly.setStyle({ fillColor: next, fillOpacity: nextOp });
+            pushHistory("楕円塗り色変更",
+                () => { obj.fillColor = prev; obj.opacity = prevOp; saveEllipses(); poly.setStyle({ fillColor: prev || obj.color, fillOpacity: prevOp || 0 }); },
+                () => { obj.fillColor = next; obj.opacity = nextOp; saveEllipses(); poly.setStyle({ fillColor: next, fillOpacity: nextOp }); }
+            );
+            return;
+        }
+
+        /* Shift+クリック → 枠線色変更 */
         if(e.originalEvent.shiftKey){
             const prev = obj.color, next = currentColor;
             obj.color = next; saveEllipses();
-            poly.setStyle({ color: next, fillColor: next });
-            pushHistory("楕円色変更",
-                () => { obj.color = prev; saveEllipses(); poly.setStyle({ color: prev, fillColor: prev }); },
-                () => { obj.color = next; saveEllipses(); poly.setStyle({ color: next, fillColor: next }); }
+            poly.setStyle({ color: next });
+            pushHistory("楕円枠線色変更",
+                () => { obj.color = prev; saveEllipses(); poly.setStyle({ color: prev }); },
+                () => { obj.color = next; saveEllipses(); poly.setStyle({ color: next }); }
             );
             return;
         }
@@ -1328,7 +1342,7 @@ function _refreshEllipse(obj){
     const rec = ellipseMarkers.get(obj);
     if(!rec) return;
     rec.poly.setLatLngs(ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot));
-    rec.poly.setStyle({ color: obj.color, fillColor: obj.color, fillOpacity: obj.opacity || 0.3 });
+    rec.poly.setStyle({ color: obj.color, fillColor: obj.fillColor || obj.color, fillOpacity: obj.opacity || 0 });
     if(selectedEllipse === obj){
         _buildHandles(obj, rec);
     } else {
