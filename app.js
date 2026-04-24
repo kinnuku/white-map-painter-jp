@@ -114,6 +114,8 @@ let polygonLayer   = L.layerGroup().addTo(map);
 
 let csvCircleObjects = [];
 
+let cityHallData = {};
+
 /* ★ 楕円データ */
 let ellipseData      = JSON.parse(localStorage.getItem("ellipses") || "[]");
 const saveEllipses   = () => localStorage.setItem("ellipses", JSON.stringify(ellipseData));
@@ -179,6 +181,15 @@ function selectAll(flag){
     render();
 }
 
+function getLabelPoint(feature, layer){
+    const gj = layer.toGeoJSON();
+    const pt = turf.pointOnFeature(gj);
+    return {
+        lat: pt.geometry.coordinates[1],
+        lng: pt.geometry.coordinates[0]
+    };
+}
+
 let mapVisible = false;
 
 function toggleJapanMap(){
@@ -193,6 +204,17 @@ function toggleJapanMap(){
 }
 
 function getName(f){ return f.properties.N03_005 || f.properties.N03_004; }
+
+async function loadCityHallData(){
+    try{
+        const res = await fetch("geo/cityhall.json");
+        if(!res.ok) throw new Error("cityhall.json 読み込み失敗");
+        cityHallData = await res.json();
+    }catch(e){
+        console.error(e);
+        cityHallData = {};
+    }
+}
 
 /* =====================================================
    描画
@@ -220,7 +242,7 @@ async function render(){
             L.geoJSON(data, {
                 pane: "polygonPane",
                 style: f => ({
-                    color:"#000", weight:1,
+                    color:"#000", weight:0.5,
                     fillColor: colorData[f.properties.N03_007]
                         || f.properties.color
                         || "#fff",
@@ -259,14 +281,45 @@ async function render(){
 
                     if(labelVisible && !used.has(key)){
                         used.add(key);
-                        const center = labelPos[key] || layer.getBounds().getCenter();
+
+                        const cityPos = cityHallData[key];
+
+                        const center = cityPos
+                            ? L.latLng(cityPos.lat, cityPos.lng)
+                            : (labelPos[key] || layer.getBounds().getCenter());
+
                         addLabelMarker(key, safeName, center);
                     }
                 }
             }).addTo(polygonLayer);
 
+            // 都道府県境界（太線）を上から重ねる
+            try {
+                const borderKey = pref + "_border";
+                let borderData = geoCache[borderKey];
+                if(!borderData){
+                    const res2 = await fetch(`geo/${pref}_border.geojson`);
+                    if(res2.ok){
+                        borderData = await res2.json();
+                        geoCache[borderKey] = borderData;
+                    }
+                }
+                if(borderData){
+                    L.geoJSON(borderData, {
+                        pane: "polygonPane",
+                        style: {
+                            color: "#000",
+                            weight: 6,
+                            fillOpacity: 0,
+                            interactive: false
+                        }
+                    }).addTo(polygonLayer);
+                }
+            } catch(e){ /* border.geojson がない県はスキップ */ }
+
         } catch(err){ console.error(err); }
     }
+
     polygonLayer.bringToBack();
     circleLayer.bringToFront();
     starLayer.bringToFront();
@@ -288,7 +341,12 @@ function makeLabelIcon(key, safeName){
 }
 
 function addLabelMarker(key, safeName, center){
-    const marker = L.marker(center, { pane: "labelPane", draggable:true, icon: makeLabelIcon(key, safeName) }).addTo(labelLayer);
+    const marker = L.marker(center, {
+        pane: "labelPane",
+        draggable:true,
+        icon: makeLabelIcon(key, safeName)
+    }).addTo(labelLayer);
+
     labelMarkers[key] = marker;
 
     marker.on('contextmenu', e => {
@@ -420,7 +478,8 @@ map.on('click', e => {
             lng: e.latlng.lng,
             text: inputText.trim(),
             size: sz,
-            color: "#000000"
+            color: "#000000",
+            bgColor: "rgba(255,255,255,0.7)" // ★追加
         };
         freeTextData.push(t);
         saveFreeTexts();
@@ -675,7 +734,18 @@ function toggleCsvEditMode(forceValue=null){
 function makeTextIcon(t){
     return L.divIcon({
         className: 'free-text-icon',
-        html: `<div class="free-text-inner" style="font-size:${t.size}px;color:${t.color};">${escapeHtml(t.text)}</div>`,
+        html: `<div class="free-text-inner"
+            style="
+                display:inline-block;
+                white-space:nowrap;
+                font-size:${t.size}px;
+                color:${t.color};
+                background:${t.bgColor || "transparent"};
+                padding:2px 6px;
+                border-radius:4px;
+            ">
+            ${escapeHtml(t.text)}
+        </div>`,
         iconAnchor: [0, 0]
     });
 }
@@ -701,6 +771,29 @@ function addFreeText(t){
     });
 
     marker.on('click', e => {
+// ★ Ctrl + Shift → 背景色変更
+        if(e.originalEvent.shiftKey && e.originalEvent.ctrlKey){
+            const prev = t.bgColor || "transparent";
+            const next = currentColor;
+
+            t.bgColor = next;
+            saveFreeTexts();
+            marker.setIcon(makeTextIcon(t));
+
+            pushHistory(`テキスト背景色変更`,
+                () => {
+                    t.bgColor = prev;
+                    saveFreeTexts();
+                    if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t));
+                },
+                () => {
+                    t.bgColor = next;
+                    saveFreeTexts();
+                    if(textMarkers.has(t)) textMarkers.get(t).setIcon(makeTextIcon(t));
+                }
+            );
+            return;
+        }
         if(e.originalEvent.shiftKey){
             const prev = t.color, next = currentColor;
             t.color = next; saveFreeTexts();
@@ -1254,11 +1347,17 @@ function _buildHandles(obj, rec){
     rotM.on('drag', function(e){
         const cPx = map.latLngToContainerPoint(L.latLng(obj.lat, obj.lng));
         const hPx = map.latLngToContainerPoint(e.target.getLatLng());
-        const dx  =  hPx.x - cPx.x;
-        const dy  = -(hPx.y - cPx.y);
-        obj.rot   = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+
+        const dx  = hPx.x - cPx.x;
+        const dy  = hPx.y - cPx.y;
+
+        const angle = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+
+        obj.rot = (360 - angle) % 360;
+
         ellipseMarkers.get(obj).poly.setLatLngs(
-            ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot));
+            ellipseLatLngs(obj.lat, obj.lng, obj.rxKm, obj.ryKm, obj.rot)
+        );
         _updateHandlePositions(obj, rec);
     });
     rotM.on('dragend', function(){
@@ -1364,18 +1463,24 @@ function removeEllipseLayer(obj){
 /* =====================================================
    起動
    ===================================================== */
-createPrefUI({ features: PREF_ORDER.map(p => ({ properties:{ N03_001:p } })) });
-setTimeout(() => {
-    setColor(currentColor);
-    document.getElementById("labelToggleBtn").textContent =
-        labelVisible ? "市区町村名非表示" : "市区町村名表示";
-}, 100);
-starData.forEach(s => addStar(s));
-freeTextData.forEach(t => addFreeText(t));
-ellipseData.forEach(obj => addEllipse(obj)); /* ★ 保存済み楕円を復元 */
+(async function(){
+    await loadCityHallData();   // ★ここ追加
 
-toggleCircleMode(false);
-toggleStarMode(false);
-toggleTextMode(false);
-toggleCsvEditMode(false);
-toggleEllipseMode(false); /* ★ */
+    createPrefUI({ features: PREF_ORDER.map(p => ({ properties:{ N03_001:p } })) });
+
+    setTimeout(() => {
+        setColor(currentColor);
+        document.getElementById("labelToggleBtn").textContent =
+            labelVisible ? "市区町村名非表示" : "市区町村名表示";
+    }, 100);
+
+    starData.forEach(s => addStar(s));
+    freeTextData.forEach(t => addFreeText(t));
+    ellipseData.forEach(obj => addEllipse(obj));
+
+    toggleCircleMode(false);
+    toggleStarMode(false);
+    toggleTextMode(false);
+    toggleCsvEditMode(false);
+    toggleEllipseMode(false);
+})();
